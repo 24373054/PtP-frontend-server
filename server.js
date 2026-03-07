@@ -7,7 +7,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
-const PORT = 3000;
+const PORT = 38024;
 const COMFYUI_URL = 'http://127.0.0.1:8188';
 
 // 创建必要的目录
@@ -292,9 +292,10 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n=== P2P Image Editor Server ===`);
-    console.log(`Server: http://localhost:${PORT}`);
+    console.log(`Local: http://localhost:${PORT}`);
+    console.log(`Network: http://10.143.12.80:${PORT}`);
     console.log(`ComfyUI: ${COMFYUI_URL}`);
     console.log(`================================\n`);
 });

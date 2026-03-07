@@ -28,7 +28,29 @@ npm start
 
 4. Open browser:
 ```
-http://localhost:3000
+# 本地访问
+http://localhost:38024
+
+# 校园网内访问
+http://10.143.12.80:38024
+
+# 公网访问（需要配置frp）
+http://140.143.183.163:38024
+```
+
+## Public Access Setup
+
+To access from outside the campus network:
+
+1. Configure frps on public server (140.143.183.163)
+2. Start frpc on this server
+3. Start P2P service
+
+See `setup_frp.md` for detailed instructions.
+
+Quick start with FRP:
+```bash
+bash start_with_frp.sh
 ```
 
 ## Usage
