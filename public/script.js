@@ -1,4 +1,8 @@
 // DOM Elements
+const authOverlay = document.getElementById('authOverlay');
+const accessCodeInput = document.getElementById('accessCode');
+const submitCodeBtn = document.getElementById('submitCode');
+const errorMessage = document.getElementById('errorMessage');
 const fileInput = document.getElementById('fileInput');
 const uploadArea = document.getElementById('uploadArea');
 const previewArea = document.getElementById('previewArea');
@@ -12,6 +16,44 @@ const downloadBtn = document.getElementById('downloadBtn');
 const status = document.getElementById('status');
 
 let selectedFile = null;
+
+// 内测码验证
+const ACCESS_CODE = 'ptp2025'; // 可以修改为你想要的内测码
+const AUTH_KEY = 'ptp_auth_token';
+
+function checkAuth() {
+    const token = sessionStorage.getItem(AUTH_KEY);
+    if (token === ACCESS_CODE) {
+        authOverlay.classList.add('hidden');
+        return true;
+    }
+    return false;
+}
+
+submitCodeBtn.addEventListener('click', () => {
+    const code = accessCodeInput.value.trim();
+    if (code === ACCESS_CODE) {
+        sessionStorage.setItem(AUTH_KEY, code);
+        authOverlay.classList.add('hidden');
+        errorMessage.classList.add('hidden');
+        checkHealth();
+    } else {
+        errorMessage.classList.remove('hidden');
+        accessCodeInput.value = '';
+        accessCodeInput.focus();
+    }
+});
+
+accessCodeInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        submitCodeBtn.click();
+    }
+});
+
+// 页面加载时检查认证
+if (!checkAuth()) {
+    accessCodeInput.focus();
+}
 
 // Check server health
 async function checkHealth() {
@@ -156,5 +198,7 @@ downloadBtn.addEventListener('click', () => {
 });
 
 // Initialize
-checkHealth();
-setInterval(checkHealth, 30000); // Check every 30 seconds
+if (checkAuth()) {
+    checkHealth();
+    setInterval(checkHealth, 30000); // Check every 30 seconds
+}

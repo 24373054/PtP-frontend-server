@@ -2,11 +2,24 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Image Editor</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- 内测码验证弹窗 -->
+    <div class="auth-overlay" id="authOverlay">
+        <div class="auth-modal">
+            <h2>Access Code Required</h2>
+            <p>Enter the beta access code to continue</p>
+            <input type="password" id="accessCode" placeholder="Enter access code" autocomplete="off">
+            <button class="btn-primary" id="submitCode">
+                <span class="btn-text">Submit</span>
+            </button>
+            <div class="error-message hidden" id="errorMessage">Invalid access code</div>
+        </div>
+    </div>
+
     <div class="container">
         <header>
             <h1>Image Editor</h1>
