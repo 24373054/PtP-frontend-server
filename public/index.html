@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Editor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Image Editor</h1>
+            <div class="status" id="status">
+                <span class="dot"></span>
+                <span class="text">Checking...</span>
+            </div>
+        </header>
+
+        <main>
+            <section class="upload-section">
+                <div class="upload-area" id="uploadArea">
+                    <input type="file" id="fileInput" accept="image/*" hidden>
+                    <div class="upload-content">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <p>Click to upload or drag image here</p>
+                        <span class="hint">JPG, PNG, WEBP · Max 20MB</span>
+                    </div>
+                </div>
+
+                <div class="preview-area hidden" id="previewArea">
+                    <img id="previewImage" alt="Preview">
+                    <button class="btn-text" id="removeBtn">Remove</button>
+                </div>
+            </section>
+
+            <section class="prompt-section">
+                <label for="promptInput">Edit Instructions</label>
+                <textarea 
+                    id="promptInput" 
+                    placeholder="Describe how you want to edit the image...&#10;&#10;Example: Replace the background with a quiet coastal cliff at overcast sunset. Remove all buildings and streets. Add wind-shaped grass and a distant ocean horizon. Keep the subject's pose and framing unchanged."
+                    rows="6"
+                ></textarea>
+            </section>
+
+            <section class="action-section">
+                <button class="btn-primary" id="editBtn" disabled>
+                    <span class="btn-text">Edit Image</span>
+                    <span class="btn-loading hidden">
+                        <span class="spinner"></span>
+                        Processing...
+                    </span>
+                </button>
+            </section>
+
+            <section class="result-section hidden" id="resultSection">
+                <div class="result-header">
+                    <h2>Result</h2>
+                    <button class="btn-text" id="downloadBtn">Download</button>
+                </div>
+                <div class="result-image">
+                    <img id="resultImage" alt="Result">
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
