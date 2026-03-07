@@ -54,8 +54,8 @@ async function uploadImageToComfyUI(filePath, filename) {
     });
 }
 
-// 生成工作流
-function generateWorkflow(imageName, prompt, seed) {
+// 生成P2P工作流（图片编辑）
+function generateP2PWorkflow(imageName, prompt, seed) {
     return {
         "9": {
             "inputs": {
@@ -197,6 +197,108 @@ function generateWorkflow(imageName, prompt, seed) {
     };
 }
 
+// 生成T2I工作流（文字生成图片）
+function generateT2IWorkflow(prompt, width, height, seed, steps, cfg) {
+    return {
+        "9": {
+            "inputs": {
+                "filename_prefix": "t2i-gen",
+                "images": ["65", 0]
+            },
+            "class_type": "SaveImage"
+        },
+        "61": {
+            "inputs": {
+                "sampler_name": "euler"
+            },
+            "class_type": "KSamplerSelect"
+        },
+        "62": {
+            "inputs": {
+                "steps": steps,
+                "width": width,
+                "height": height
+            },
+            "class_type": "Flux2Scheduler"
+        },
+        "63": {
+            "inputs": {
+                "cfg": cfg,
+                "model": ["70", 0],
+                "positive": ["74", 0],
+                "negative": ["67", 0]
+            },
+            "class_type": "CFGGuider"
+        },
+        "64": {
+            "inputs": {
+                "noise": ["73", 0],
+                "guider": ["63", 0],
+                "sampler": ["61", 0],
+                "sigmas": ["62", 0],
+                "latent_image": ["66", 0]
+            },
+            "class_type": "SamplerCustomAdvanced"
+        },
+        "65": {
+            "inputs": {
+                "samples": ["64", 0],
+                "vae": ["72", 0]
+            },
+            "class_type": "VAEDecode"
+        },
+        "66": {
+            "inputs": {
+                "width": width,
+                "height": height,
+                "batch_size": 1
+            },
+            "class_type": "EmptyFlux2LatentImage"
+        },
+        "67": {
+            "inputs": {
+                "text": "",
+                "clip": ["71", 0]
+            },
+            "class_type": "CLIPTextEncode"
+        },
+        "70": {
+            "inputs": {
+                "unet_name": "flux2/FLUX.2-klein-9b-fp8/flux-2-klein-9b-fp8.safetensors",
+                "weight_dtype": "default"
+            },
+            "class_type": "UNETLoader"
+        },
+        "71": {
+            "inputs": {
+                "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+                "type": "flux2",
+                "device": "default"
+            },
+            "class_type": "CLIPLoader"
+        },
+        "72": {
+            "inputs": {
+                "vae_name": "flux2-vae.safetensors"
+            },
+            "class_type": "VAELoader"
+        },
+        "73": {
+            "inputs": {
+                "noise_seed": seed
+            },
+            "class_type": "RandomNoise"
+        },
+        "74": {
+            "inputs": {
+                "text": prompt,
+                "clip": ["71", 0]
+            },
+            "class_type": "CLIPTextEncode"
+        }
+    };
+}
+
 // 提交工作流到ComfyUI
 async function queuePrompt(workflow) {
     const response = await axios.post(`${COMFYUI_URL}/prompt`, {
@@ -234,6 +336,59 @@ async function waitForCompletion(promptId, timeout = 300000) {
     throw new Error('Timeout waiting for image generation');
 }
 
+// API: 文字生成图片
+app.post('/api/generate', async (req, res) => {
+    try {
+        const { prompt, width = 1024, height = 1024, steps = 20, cfg = 5.0 } = req.body;
+        
+        if (!prompt || prompt.trim() === '') {
+            return res.status(400).json({ error: 'Prompt is required' });
+        }
+        
+        // 验证参数
+        if (width < 256 || width > 2048 || height < 256 || height > 2048) {
+            return res.status(400).json({ error: 'Width and height must be between 256 and 2048' });
+        }
+        
+        if (steps < 1 || steps > 50) {
+            return res.status(400).json({ error: 'Steps must be between 1 and 50' });
+        }
+        
+        const seed = Math.floor(Math.random() * 1000000000000000);
+        
+        // 生成并提交工作流
+        const workflow = generateT2IWorkflow(prompt, width, height, seed, steps, cfg);
+        const promptId = await queuePrompt(workflow);
+        
+        // 等待完成
+        const result = await waitForCompletion(promptId);
+        
+        // 下载结果图片
+        const imageUrl = `${COMFYUI_URL}/view?filename=${result.filename}&subfolder=${result.subfolder || ''}&type=${result.type}`;
+        const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+        
+        const outputFilename = `${uuidv4()}.png`;
+        const outputPath = path.join(OUTPUT_DIR, outputFilename);
+        fs.writeFileSync(outputPath, imageResponse.data);
+        
+        res.json({
+            success: true,
+            image: `/outputs/${outputFilename}`,
+            prompt: prompt,
+            width: width,
+            height: height,
+            seed: seed
+        });
+        
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ 
+            error: 'Failed to generate image',
+            details: error.message 
+        });
+    }
+});
+
 // API: 编辑图片
 app.post('/api/edit', upload.single('image'), async (req, res) => {
     try {
@@ -253,7 +408,7 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
         await uploadImageToComfyUI(req.file.path, imageName);
         
         // 生成并提交工作流
-        const workflow = generateWorkflow(imageName, prompt, seed);
+        const workflow = generateP2PWorkflow(imageName, prompt, seed);
         const promptId = await queuePrompt(workflow);
         
         // 等待完成

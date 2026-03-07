@@ -154,106 +154,139 @@ fetch('https://ptp.matrixlabs.cn/api/edit', {
 
 ### 3. Text-to-Image Generation (T2I)
 
-Generate new images from text descriptions. Currently available as ComfyUI workflow only.
+Generate new images from text descriptions using Flux2 Klein model.
 
-**Workflow File**: `/home/Matrix/yz/AI-movie/ai-comic-drama/comfyui/workflows/Flux2-s1-TtP1.json`
+**Endpoint**: `POST /api/generate`
 
-**ComfyUI API Endpoint**: `POST http://127.0.0.1:8188/prompt`
+**Content-Type**: `application/json`
 
-**Workflow Parameters**:
+**Parameters**:
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `prompt` | String | Required | Text description of the image to generate |
-| `width` | Integer | 1024 | Image width in pixels |
-| `height` | Integer | 1024 | Image height in pixels |
-| `seed` | Integer | Random | Random seed for reproducibility |
-| `steps` | Integer | 20 | Number of diffusion steps |
-| `cfg` | Float | 5.0 | Classifier-free guidance scale |
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `prompt` | String | Yes | - | Text description of the image to generate |
+| `width` | Integer | No | 1024 | Image width in pixels (256-2048) |
+| `height` | Integer | No | 1024 | Image height in pixels (256-2048) |
+| `steps` | Integer | No | 20 | Number of diffusion steps (1-50) |
+| `cfg` | Float | No | 5.0 | Classifier-free guidance scale |
+
+**Example Request (cURL)**:
+```bash
+curl -X POST https://ptp.matrixlabs.cn/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "A vintage motorcycle parked in front of a retro diner at sunset, warm orange and pink sky, neon signs glowing, 80s vintage photo style, film grain",
+    "width": 1024,
+    "height": 1024,
+    "steps": 20,
+    "cfg": 5.0
+  }'
+```
 
 **Example Request (Python)**:
 ```python
 import requests
-import json
 
-# Load the workflow
-with open('Flux2-s1-TtP1.json', 'r') as f:
-    workflow = json.load(f)
-
-# Modify the prompt (node 76)
-workflow['76']['inputs']['widgets_values'][0] = "A vintage motorcycle parked in front of a retro diner at sunset"
-
-# Modify width/height if needed (node 77)
-workflow['77']['inputs']['value'] = 1024  # width
-workflow['77']['inputs']['value_1'] = 1024  # height
-
-# Submit to ComfyUI
-response = requests.post(
-    'http://127.0.0.1:8188/prompt',
-    json={
-        'prompt': workflow,
-        'client_id': 'your-client-id'
-    }
-)
-
-prompt_id = response.json()['prompt_id']
-print(f"Prompt ID: {prompt_id}")
-
-# Poll for completion
-import time
-while True:
-    history = requests.get(f'http://127.0.0.1:8188/history/{prompt_id}').json()
-    if prompt_id in history and history[prompt_id].get('status', {}).get('completed'):
-        # Get output images
-        outputs = history[prompt_id]['outputs']
-        for node_id, output in outputs.items():
-            if 'images' in output:
-                for img in output['images']:
-                    filename = img['filename']
-                    subfolder = img.get('subfolder', '')
-                    img_url = f"http://127.0.0.1:8188/view?filename={filename}&subfolder={subfolder}&type=output"
-                    print(f"Image URL: {img_url}")
-        break
-    time.sleep(1)
-```
-
-**Example Request (cURL)**:
-```bash
-# 1. Prepare workflow JSON with your prompt
-cat > workflow.json << 'EOF'
-{
-  "76": {
-    "inputs": {
-      "widgets_values": ["A serene mountain landscape at dawn"]
-    },
-    "class_type": "PrimitiveStringMultiline"
-  },
-  ...
+url = "https://ptp.matrixlabs.cn/api/generate"
+data = {
+    "prompt": "A serene mountain landscape at dawn, misty valleys, golden sunlight",
+    "width": 1024,
+    "height": 1024,
+    "steps": 20,
+    "cfg": 5.0
 }
-EOF
 
-# 2. Submit to ComfyUI
-curl -X POST http://127.0.0.1:8188/prompt \
-  -H "Content-Type: application/json" \
-  -d @workflow.json
+response = requests.post(url, json=data)
+result = response.json()
+print(f"Image URL: https://ptp.matrixlabs.cn{result['image']}")
 ```
+
+**Example Request (JavaScript)**:
+```javascript
+fetch('https://ptp.matrixlabs.cn/api/generate', {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+        prompt: 'A futuristic cityscape at night, neon lights, cyberpunk style',
+        width: 1024,
+        height: 1024,
+        steps: 20,
+        cfg: 5.0
+    })
+})
+.then(response => response.json())
+.then(data => {
+    console.log('Generated image:', data.image);
+    // Display image: <img src={`https://ptp.matrixlabs.cn${data.image}`} />
+});
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "image": "/outputs/xyz789.png",
+  "prompt": "A vintage motorcycle parked in front of a retro diner at sunset...",
+  "width": 1024,
+  "height": 1024,
+  "seed": 432262096973502
+}
+```
+
+**Response Fields**:
+- `success` (boolean): Whether the operation succeeded
+- `image` (string): Relative URL path to the generated image
+- `prompt` (string): The prompt that was used
+- `width` (integer): Generated image width
+- `height` (integer): Generated image height
+- `seed` (integer): Random seed used (for reproducibility)
+
+**Full Image URL**: `https://ptp.matrixlabs.cn/outputs/xyz789.png`
+
+**Processing Time**: Typically 20-40 seconds depending on resolution and steps
+
+**Error Response**:
+```json
+{
+  "error": "Failed to generate image",
+  "details": "Timeout waiting for image generation"
+}
+```
+
+**Status Codes**:
+- `200`: Success
+- `400`: Bad request (missing prompt or invalid parameters)
+- `500`: Server error
 
 **Prompt Guidelines for T2I**:
 - Be descriptive and specific
-- Include style, lighting, mood
-- Mention composition and framing
+- Include style, lighting, mood, composition
+- Mention artistic style or photography type
 - Examples:
-  - "A vintage motorcycle parked in front of a retro diner at sunset, warm orange and pink sky, neon signs glowing, 80s vintage photo style, film grain"
-  - "Portrait of a young woman with flowing red hair, soft natural lighting, shallow depth of field, professional photography"
-  - "Futuristic cityscape at night, neon lights, cyberpunk style, rain-soaked streets, cinematic composition"
+  - ✓ "A vintage motorcycle parked in front of a retro diner at sunset, warm orange and pink sky, neon signs glowing, 80s vintage photo style, film grain"
+  - ✓ "Portrait of a young woman with flowing red hair, soft natural lighting, shallow depth of field, professional photography, bokeh background"
+  - ✓ "Futuristic cityscape at night, neon lights reflecting on wet streets, cyberpunk style, cinematic composition, high contrast"
+  - ✗ "A nice picture" (too vague)
+
+**Parameter Guidelines**:
+- **Width/Height**: Multiples of 64 work best. Common: 512, 768, 1024, 1536
+- **Steps**: 
+  - 10-15: Fast, lower quality
+  - 20-25: Balanced (recommended)
+  - 30-50: High quality, slower
+- **CFG**: 
+  - 3-5: More creative, less adherence to prompt
+  - 5-7: Balanced (recommended)
+  - 8-12: Strict adherence, may be less creative
 
 **Technical Details**:
 - Model: Flux2 Klein 9B FP8
-- Default Resolution: 1024x1024
-- Steps: 20 (higher quality)
-- CFG: 5.0
 - Sampler: Euler
 - VAE: Flux2 VAE
+- Max Resolution: 2048x2048
+- Recommended: 1024x1024 or 1024x1408 (portrait)
 
 ---
 
@@ -301,6 +334,7 @@ app = Flask(__name__)
 
 @app.route('/edit-image', methods=['POST'])
 def edit_image():
+    """Image-to-Image editing"""
     if 'image' not in request.files:
         return jsonify({'error': 'No image provided'}), 400
     
@@ -311,6 +345,18 @@ def edit_image():
         'https://ptp.matrixlabs.cn/api/edit',
         files=files,
         data=data
+    )
+    
+    return jsonify(response.json())
+
+@app.route('/generate-image', methods=['POST'])
+def generate_image():
+    """Text-to-Image generation"""
+    data = request.get_json()
+    
+    response = requests.post(
+        'https://ptp.matrixlabs.cn/api/generate',
+        json=data
     )
     
     return jsonify(response.json())
@@ -330,7 +376,8 @@ function ImageEditor() {
     const [result, setResult] = useState(null);
     const [loading, setLoading] = useState(false);
 
-    const handleSubmit = async (e) => {
+    // Image-to-Image editing
+    const handleEdit = async (e) => {
         e.preventDefault();
         setLoading(true);
 
@@ -352,23 +399,57 @@ function ImageEditor() {
         }
     };
 
+    // Text-to-Image generation
+    const handleGenerate = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+
+        try {
+            const response = await fetch('https://ptp.matrixlabs.cn/api/generate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    prompt: prompt,
+                    width: 1024,
+                    height: 1024,
+                    steps: 20,
+                    cfg: 5.0
+                })
+            });
+            const data = await response.json();
+            setResult(`https://ptp.matrixlabs.cn${data.image}`);
+        } catch (error) {
+            console.error('Error:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
-        <form onSubmit={handleSubmit}>
-            <input 
-                type="file" 
-                onChange={(e) => setImage(e.target.files[0])}
-                accept="image/*"
-            />
-            <textarea 
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe your edits..."
-            />
-            <button type="submit" disabled={loading}>
-                {loading ? 'Processing...' : 'Edit Image'}
-            </button>
+        <div>
+            <h2>Image Editor</h2>
+            <form onSubmit={handleEdit}>
+                <input 
+                    type="file" 
+                    onChange={(e) => setImage(e.target.files[0])}
+                    accept="image/*"
+                />
+                <textarea 
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Describe your edits or image..."
+                />
+                <button type="submit" disabled={loading}>
+                    {loading ? 'Processing...' : 'Edit Image'}
+                </button>
+                <button type="button" onClick={handleGenerate} disabled={loading}>
+                    {loading ? 'Processing...' : 'Generate from Text'}
+                </button>
+            </form>
             {result && <img src={result} alt="Result" />}
-        </form>
+        </div>
     );
 }
 ```
@@ -462,9 +543,9 @@ function ImageEditor() {
 
 **Benchmarks**:
 - Image-to-Image (P2P): 10-15 seconds (4 steps)
-- Text-to-Image (T2I): 20-30 seconds (20 steps)
+- Text-to-Image (T2I): 20-40 seconds (20 steps)
 - Throughput: ~4-6 images/minute (single GPU)
-- Max Resolution: 2048x2048 (1 megapixel recommended)
+- Max Resolution: 2048x2048 (1024x1024 recommended)
 
 ---
 
@@ -503,47 +584,6 @@ This API is provided for internal testing and development purposes.
 - Service availability not guaranteed
 
 **Model License**: Flux2 Klein follows Black Forest Labs' licensing terms
-
----
-
-## Appendix: ComfyUI Workflow Structure
-
-### Image-to-Image Workflow (Flux2-s1-PtP2-api.json)
-
-**Key Nodes**:
-- Node 76: `LoadImage` - Input image
-- Node 75:74: `CLIPTextEncode` - Edit prompt
-- Node 75:73: `RandomNoise` - Seed control
-- Node 9: `SaveImage` - Output
-
-**Workflow Modifications**:
-```javascript
-// Change input image
-workflow['76']['inputs']['image'] = 'your-image.jpg';
-
-// Change prompt
-workflow['75:74']['inputs']['text'] = 'Your edit instructions';
-
-// Change seed (for reproducibility)
-workflow['75:73']['inputs']['noise_seed'] = 12345;
-```
-
-### Text-to-Image Workflow (Flux2-s1-TtP1.json)
-
-**Key Nodes**:
-- Node 76: `PrimitiveStringMultiline` - Text prompt
-- Node 77: Subgraph - T2I generation pipeline
-- Node 78: `SaveImage` - Output
-
-**Workflow Modifications**:
-```javascript
-// Change prompt
-workflow['76']['inputs']['widgets_values'][0] = 'Your image description';
-
-// Change resolution
-workflow['77']['inputs']['value'] = 1024;  // width
-workflow['77']['inputs']['value_1'] = 1024;  // height
-```
 
 ---
 
