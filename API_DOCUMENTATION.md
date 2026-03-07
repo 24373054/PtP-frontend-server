@@ -167,8 +167,8 @@ Generate new images from text descriptions using Flux2 Klein model.
 | `prompt` | String | Yes | - | Text description of the image to generate |
 | `width` | Integer | No | 1024 | Image width in pixels (256-2048) |
 | `height` | Integer | No | 1024 | Image height in pixels (256-2048) |
-| `steps` | Integer | No | 20 | Number of diffusion steps (1-50) |
-| `cfg` | Float | No | 5.0 | Classifier-free guidance scale |
+| `steps` | Integer | No | 4 | Number of diffusion steps (1-50, Flux2 Klein optimized for 4 steps) |
+| `cfg` | Float | No | 1.0 | Classifier-free guidance scale (Flux2 Klein optimized for 1.0) |
 
 **Example Request (cURL)**:
 ```bash
@@ -192,8 +192,8 @@ data = {
     "prompt": "A serene mountain landscape at dawn, misty valleys, golden sunlight",
     "width": 1024,
     "height": 1024,
-    "steps": 20,
-    "cfg": 5.0
+    "steps": 4,
+    "cfg": 1.0
 }
 
 response = requests.post(url, json=data)
@@ -212,8 +212,8 @@ fetch('https://ptp.matrixlabs.cn/api/generate', {
         prompt: 'A futuristic cityscape at night, neon lights, cyberpunk style',
         width: 1024,
         height: 1024,
-        steps: 20,
-        cfg: 5.0
+        steps: 4,
+        cfg: 1.0
     })
 })
 .then(response => response.json())
@@ -245,7 +245,7 @@ fetch('https://ptp.matrixlabs.cn/api/generate', {
 
 **Full Image URL**: `https://ptp.matrixlabs.cn/outputs/xyz789.png`
 
-**Processing Time**: Typically 20-40 seconds depending on resolution and steps
+**Processing Time**: Typically 5-15 seconds depending on resolution (Flux2 Klein is optimized for fast inference)
 
 **Error Response**:
 ```json
@@ -273,18 +273,20 @@ fetch('https://ptp.matrixlabs.cn/api/generate', {
 **Parameter Guidelines**:
 - **Width/Height**: Multiples of 64 work best. Common: 512, 768, 1024, 1536
 - **Steps**: 
-  - 10-15: Fast, lower quality
-  - 20-25: Balanced (recommended)
-  - 30-50: High quality, slower
+  - 4: Optimal for Flux2 Klein (fast, high quality)
+  - 8-12: Higher quality, slower
+  - 20+: Diminishing returns for Flux2 Klein
 - **CFG**: 
-  - 3-5: More creative, less adherence to prompt
-  - 5-7: Balanced (recommended)
-  - 8-12: Strict adherence, may be less creative
+  - 1.0: Optimal for Flux2 Klein (recommended)
+  - 1.5-3.0: More guidance, may reduce quality
+  - Higher values not recommended for Flux2 Klein
 
 **Technical Details**:
-- Model: Flux2 Klein 9B FP8
+- Model: Flux2 Klein 9B FP8 (optimized for fast inference)
 - Sampler: Euler
 - VAE: Flux2 VAE
+- Default Steps: 4 (optimal for Flux2 Klein)
+- Default CFG: 1.0 (optimal for Flux2 Klein)
 - Max Resolution: 2048x2048
 - Recommended: 1024x1024 or 1024x1408 (portrait)
 
@@ -543,8 +545,8 @@ function ImageEditor() {
 
 **Benchmarks**:
 - Image-to-Image (P2P): 10-15 seconds (4 steps)
-- Text-to-Image (T2I): 20-40 seconds (20 steps)
-- Throughput: ~4-6 images/minute (single GPU)
+- Text-to-Image (T2I): 5-15 seconds (4 steps, Flux2 Klein fast mode)
+- Throughput: ~6-10 images/minute (single GPU)
 - Max Resolution: 2048x2048 (1024x1024 recommended)
 
 ---

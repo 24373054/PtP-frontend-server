@@ -356,7 +356,7 @@ async function waitForCompletion(promptId, timeout = 300000) {
 // API: 文字生成图片
 app.post('/api/generate', async (req, res) => {
     try {
-        const { prompt, width = 1024, height = 1024, steps = 20, cfg = 5.0 } = req.body;
+        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1 } = req.body;
         
         if (!prompt || prompt.trim() === '') {
             return res.status(400).json({ error: 'Prompt is required' });
