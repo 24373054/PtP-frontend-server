@@ -200,76 +200,76 @@ function generateP2PWorkflow(imageName, prompt, seed) {
 // 生成T2I工作流（文字生成图片）
 function generateT2IWorkflow(prompt, width, height, seed, steps, cfg) {
     return {
-        "9": {
+        "76": {
+            "inputs": {
+                "value": prompt
+            },
+            "class_type": "PrimitiveStringMultiline"
+        },
+        "78": {
             "inputs": {
                 "filename_prefix": "t2i-gen",
-                "images": ["65", 0]
+                "images": ["77:65", 0]
             },
             "class_type": "SaveImage"
         },
-        "61": {
+        "77:61": {
             "inputs": {
                 "sampler_name": "euler"
             },
             "class_type": "KSamplerSelect"
         },
-        "62": {
+        "77:64": {
             "inputs": {
-                "steps": steps,
-                "width": width,
-                "height": height
-            },
-            "class_type": "Flux2Scheduler"
-        },
-        "63": {
-            "inputs": {
-                "cfg": cfg,
-                "model": ["70", 0],
-                "positive": ["74", 0],
-                "negative": ["67", 0]
-            },
-            "class_type": "CFGGuider"
-        },
-        "64": {
-            "inputs": {
-                "noise": ["73", 0],
-                "guider": ["63", 0],
-                "sampler": ["61", 0],
-                "sigmas": ["62", 0],
-                "latent_image": ["66", 0]
+                "noise": ["77:73", 0],
+                "guider": ["77:63", 0],
+                "sampler": ["77:61", 0],
+                "sigmas": ["77:62", 0],
+                "latent_image": ["77:66", 0]
             },
             "class_type": "SamplerCustomAdvanced"
         },
-        "65": {
+        "77:65": {
             "inputs": {
-                "samples": ["64", 0],
-                "vae": ["72", 0]
+                "samples": ["77:64", 0],
+                "vae": ["77:72", 0]
             },
             "class_type": "VAEDecode"
         },
-        "66": {
+        "77:66": {
             "inputs": {
-                "width": width,
-                "height": height,
+                "width": ["77:68", 0],
+                "height": ["77:69", 0],
                 "batch_size": 1
             },
             "class_type": "EmptyFlux2LatentImage"
         },
-        "67": {
+        "77:68": {
             "inputs": {
-                "text": "",
-                "clip": ["71", 0]
+                "value": width
             },
-            "class_type": "CLIPTextEncode"
+            "class_type": "PrimitiveInt"
         },
-        "70": {
+        "77:69": {
+            "inputs": {
+                "value": height
+            },
+            "class_type": "PrimitiveInt"
+        },
+        "77:73": {
+            "inputs": {
+                "noise_seed": seed
+            },
+            "class_type": "RandomNoise"
+        },
+        "77:70": {
             "inputs": {
                 "unet_name": "flux2/FLUX.2-klein-9b-fp8/flux-2-klein-9b-fp8.safetensors",
                 "weight_dtype": "default"
             },
             "class_type": "UNETLoader"
         },
-        "71": {
+        "77:71": {
             "inputs": {
                 "clip_name": "qwen_3_8b_fp8mixed.safetensors",
                 "type": "flux2",
@@ -277,24 +277,41 @@ function generateT2IWorkflow(prompt, width, height, seed, steps, cfg) {
             },
             "class_type": "CLIPLoader"
         },
-        "72": {
+        "77:72": {
             "inputs": {
                 "vae_name": "flux2-vae.safetensors"
             },
             "class_type": "VAELoader"
         },
-        "73": {
+        "77:63": {
             "inputs": {
-                "noise_seed": seed
+                "cfg": cfg,
+                "model": ["77:70", 0],
+                "positive": ["77:74", 0],
+                "negative": ["77:76", 0]
             },
-            "class_type": "RandomNoise"
+            "class_type": "CFGGuider"
         },
-        "74": {
+        "77:76": {
             "inputs": {
-                "text": prompt,
-                "clip": ["71", 0]
+                "conditioning": ["77:74", 0]
+            },
+            "class_type": "ConditioningZeroOut"
+        },
+        "77:74": {
+            "inputs": {
+                "text": ["76", 0],
+                "clip": ["77:71", 0]
             },
             "class_type": "CLIPTextEncode"
+        },
+        "77:62": {
+            "inputs": {
+                "steps": steps,
+                "width": ["77:68", 0],
+                "height": ["77:69", 0]
+            },
+            "class_type": "Flux2Scheduler"
         }
     };
 }
