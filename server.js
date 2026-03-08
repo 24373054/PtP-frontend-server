@@ -5,10 +5,148 @@ const FormData = require('form-data');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const sharp = require('sharp');
 
 const app = express();
 const PORT = 38024;
 const COMFYUI_URL = 'http://127.0.0.1:8188';
+
+// 用户数据文件路径
+const USERS_FILE = path.join(__dirname, 'users.json');
+
+// 订阅方案配置
+const SUBSCRIPTION_PLANS = {
+    free: {
+        name: { en: 'Free', zh: '免费版' },
+        credits: 10,
+        creditCost: { edit: 2, generate: 1 },
+        price: 0,
+        features: {
+            en: ['10 credits/month', 'Basic quality', 'Standard support'],
+            zh: ['10 积分/月', '基础画质', '标准支持']
+        }
+    },
+    basic: {
+        name: { en: 'Basic', zh: '基础版' },
+        credits: 100,
+        creditCost: { edit: 2, generate: 1 },
+        price: 9.99,
+        features: {
+            en: ['100 credits/month', 'High quality', 'Priority support', 'No watermark'],
+            zh: ['100 积分/月', '高清画质', '优先支持', '无水印']
+        }
+    },
+    pro: {
+        name: { en: 'Professional', zh: '专业版' },
+        credits: 500,
+        creditCost: { edit: 1, generate: 1 },
+        price: 29.99,
+        features: {
+            en: ['500 credits/month', 'Ultra quality', '24/7 support', 'API access', 'Commercial license'],
+            zh: ['500 积分/月', '超高清画质', '24/7 支持', 'API 访问', '商业授权']
+        }
+    },
+    enterprise: {
+        name: { en: 'Enterprise', zh: '企业版' },
+        credits: 2000,
+        creditCost: { edit: 1, generate: 1 },
+        price: 99.99,
+        features: {
+            en: ['2000 credits/month', 'Maximum quality', 'Dedicated support', 'Custom API', 'White label', 'SLA guarantee'],
+            zh: ['2000 积分/月', '最高画质', '专属支持', '定制 API', '白标服务', 'SLA 保障']
+        }
+    },
+    beta: {
+        name: { en: 'Beta User', zh: '内测用户' },
+        credits: 999999,
+        creditCost: { edit: 0, generate: 0 },
+        price: 0,
+        features: {
+            en: ['Unlimited credits', 'All features', 'Beta access'],
+            zh: ['无限积分', '全部功能', '内测权限']
+        }
+    }
+};
+
+// 读取用户数据
+function loadUsers() {
+    try {
+        const data = fs.readFileSync(USERS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        console.error('Failed to load users:', error);
+        return {};
+    }
+}
+
+// 保存用户数据
+function saveUsers(users) {
+    try {
+        fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+        return true;
+    } catch (error) {
+        console.error('Failed to save users:', error);
+        return false;
+    }
+}
+
+// 验证访问码并返回用户信息
+function authenticateUser(accessCode) {
+    const users = loadUsers();
+    const user = users[accessCode];
+    
+    if (!user) {
+        return null;
+    }
+    
+    // 添加订阅方案信息
+    const plan = SUBSCRIPTION_PLANS[user.plan] || SUBSCRIPTION_PLANS.free;
+    
+    return {
+        userId: user.userId,
+        username: user.username,
+        email: user.email,
+        plan: user.plan,
+        planName: plan.name.en, // 默认返回英文名称，前端会根据语言切换
+        credits: user.credits,
+        usedCredits: user.usedCredits,
+        creditCost: plan.creditCost,
+        features: plan.features.en,
+        createdAt: user.createdAt,
+        expiresAt: user.expiresAt
+    };
+}
+
+// 扣除积分
+function deductCredits(accessCode, operation) {
+    const users = loadUsers();
+    const user = users[accessCode];
+    
+    if (!user) {
+        return { success: false, error: 'User not found' };
+    }
+    
+    const plan = SUBSCRIPTION_PLANS[user.plan] || SUBSCRIPTION_PLANS.free;
+    const cost = plan.creditCost[operation] || 1;
+    
+    // Beta用户不扣积分
+    if (user.plan === 'beta') {
+        return { success: true, credits: user.credits, cost: 0 };
+    }
+    
+    if (user.credits < cost) {
+        return { success: false, error: 'Insufficient credits', credits: user.credits, required: cost };
+    }
+    
+    user.credits -= cost;
+    user.usedCredits += cost;
+    
+    if (saveUsers(users)) {
+        return { success: true, credits: user.credits, cost: cost };
+    } else {
+        return { success: false, error: 'Failed to update credits' };
+    }
+}
 
 // 创建必要的目录
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
@@ -42,6 +180,44 @@ const upload = multer({
 app.use(express.static('public'));
 app.use('/outputs', express.static(OUTPUT_DIR));
 app.use(express.json());
+
+// API: 用户认证
+app.post('/api/auth', (req, res) => {
+    const { accessCode } = req.body;
+    
+    if (!accessCode) {
+        return res.status(400).json({ error: 'Access code is required' });
+    }
+    
+    const user = authenticateUser(accessCode);
+    
+    if (!user) {
+        return res.status(401).json({ error: 'Invalid access code' });
+    }
+    
+    res.json({
+        success: true,
+        user: user
+    });
+});
+
+// API: 获取订阅方案
+app.get('/api/plans', (req, res) => {
+    const lang = req.query.lang || 'en';
+    
+    const plans = Object.entries(SUBSCRIPTION_PLANS)
+        .filter(([key]) => key !== 'beta') // 不显示beta方案
+        .map(([key, plan]) => ({
+            id: key,
+            name: plan.name[lang] || plan.name.en,
+            credits: plan.credits,
+            price: plan.price,
+            features: plan.features[lang] || plan.features.en,
+            creditCost: plan.creditCost
+        }));
+    
+    res.json({ plans });
+});
 
 // 上传图片到ComfyUI
 async function uploadImageToComfyUI(filePath, filename) {
@@ -325,6 +501,23 @@ async function queuePrompt(workflow) {
     return response.data.prompt_id;
 }
 
+// 生成缩略图
+async function generateThumbnail(imagePath, thumbnailPath, maxWidth = 800) {
+    try {
+        await sharp(imagePath)
+            .resize(maxWidth, null, {
+                fit: 'inside',
+                withoutEnlargement: true
+            })
+            .jpeg({ quality: 85 })
+            .toFile(thumbnailPath);
+        return true;
+    } catch (error) {
+        console.error('Thumbnail generation failed:', error);
+        return false;
+    }
+}
+
 // 轮询检查任务状态
 async function waitForCompletion(promptId, timeout = 300000) {
     const startTime = Date.now();
@@ -356,7 +549,27 @@ async function waitForCompletion(promptId, timeout = 300000) {
 // API: 文字生成图片
 app.post('/api/generate', async (req, res) => {
     try {
-        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1 } = req.body;
+        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1, accessCode } = req.body;
+        
+        if (!accessCode) {
+            return res.status(401).json({ error: 'Access code is required' });
+        }
+        
+        // 验证用户
+        const user = authenticateUser(accessCode);
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid access code' });
+        }
+        
+        // 检查并扣除积分
+        const creditResult = deductCredits(accessCode, 'generate');
+        if (!creditResult.success) {
+            return res.status(402).json({ 
+                error: creditResult.error,
+                credits: creditResult.credits,
+                required: creditResult.required
+            });
+        }
         
         if (!prompt || prompt.trim() === '') {
             return res.status(400).json({ error: 'Prompt is required' });
@@ -388,13 +601,21 @@ app.post('/api/generate', async (req, res) => {
         const outputPath = path.join(OUTPUT_DIR, outputFilename);
         fs.writeFileSync(outputPath, imageResponse.data);
         
+        // 生成缩略图
+        const thumbnailFilename = `thumb_${outputFilename.replace('.png', '.jpg')}`;
+        const thumbnailPath = path.join(OUTPUT_DIR, thumbnailFilename);
+        await generateThumbnail(outputPath, thumbnailPath, 800);
+        
         res.json({
             success: true,
             image: `/outputs/${outputFilename}`,
+            thumbnail: `/outputs/${thumbnailFilename}`,
             prompt: prompt,
             width: width,
             height: height,
-            seed: seed
+            seed: seed,
+            creditsUsed: creditResult.cost,
+            creditsRemaining: creditResult.credits
         });
         
     } catch (error) {
@@ -413,7 +634,28 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'No image uploaded' });
         }
         
-        const { prompt } = req.body;
+        const { prompt, accessCode } = req.body;
+        
+        if (!accessCode) {
+            return res.status(401).json({ error: 'Access code is required' });
+        }
+        
+        // 验证用户
+        const user = authenticateUser(accessCode);
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid access code' });
+        }
+        
+        // 检查并扣除积分
+        const creditResult = deductCredits(accessCode, 'edit');
+        if (!creditResult.success) {
+            return res.status(402).json({ 
+                error: creditResult.error,
+                credits: creditResult.credits,
+                required: creditResult.required
+            });
+        }
+        
         if (!prompt || prompt.trim() === '') {
             return res.status(400).json({ error: 'Prompt is required' });
         }
@@ -439,10 +681,18 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
         const outputPath = path.join(OUTPUT_DIR, outputFilename);
         fs.writeFileSync(outputPath, imageResponse.data);
         
+        // 生成缩略图
+        const thumbnailFilename = `thumb_${outputFilename.replace('.png', '.jpg')}`;
+        const thumbnailPath = path.join(OUTPUT_DIR, thumbnailFilename);
+        await generateThumbnail(outputPath, thumbnailPath, 800);
+        
         res.json({
             success: true,
             image: `/outputs/${outputFilename}`,
-            prompt: prompt
+            thumbnail: `/outputs/${thumbnailFilename}`,
+            prompt: prompt,
+            creditsUsed: creditResult.cost,
+            creditsRemaining: creditResult.credits
         });
         
     } catch (error) {

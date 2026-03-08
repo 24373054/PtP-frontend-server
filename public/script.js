@@ -4,6 +4,21 @@ const accessCodeInput = document.getElementById('accessCode');
 const submitCodeBtn = document.getElementById('submitCode');
 const errorMessage = document.getElementById('errorMessage');
 
+// Custom alert elements
+const customAlertOverlay = document.getElementById('customAlertOverlay');
+const customAlertContent = document.getElementById('customAlertContent');
+const customAlertBtn = document.getElementById('customAlertBtn');
+
+// User info elements
+const userInfo = document.getElementById('userInfo');
+const userName = document.getElementById('userName');
+const userPlan = document.getElementById('userPlan');
+const creditsCount = document.getElementById('creditsCount');
+const editBtnCredit = document.getElementById('editBtnCredit');
+const generateBtnCredit = document.getElementById('generateBtnCredit');
+const plansSection = document.getElementById('plansSection');
+const plansGrid = document.getElementById('plansGrid');
+
 // Mode switching
 const tabBtns = document.querySelectorAll('.tab-btn');
 const editMode = document.getElementById('editMode');
@@ -31,11 +46,34 @@ const resultSection = document.getElementById('resultSection');
 const resultImage = document.getElementById('resultImage');
 const downloadBtn = document.getElementById('downloadBtn');
 const status = document.getElementById('status');
+const loadingOverlay = document.getElementById('loadingOverlay');
 
 let selectedFile = null;
 let currentMode = 'edit';
 let currentLang = 'en';
 let isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+let progressInterval = null;
+let currentOriginalImage = null; // 存储原图URL
+let currentUser = null; // 存储当前用户信息
+let currentAccessCode = null; // 存储访问码
+
+// 自定义弹窗函数
+function showAlert(message) {
+    customAlertContent.textContent = message;
+    customAlertOverlay.classList.remove('hidden');
+}
+
+// 关闭自定义弹窗
+customAlertBtn.addEventListener('click', () => {
+    customAlertOverlay.classList.add('hidden');
+});
+
+// 点击遮罩层关闭弹窗
+customAlertOverlay.addEventListener('click', (e) => {
+    if (e.target === customAlertOverlay) {
+        customAlertOverlay.classList.add('hidden');
+    }
+});
 
 // 检测是否支持保存到相册
 function canSaveToAlbum() {
@@ -45,6 +83,68 @@ function canSaveToAlbum() {
         // 或者支持 Web Share API
         (navigator.share && navigator.canShare)
     );
+}
+
+// 显示加载进度
+function showLoadingProgress() {
+    // 显示结果区域
+    resultSection.classList.remove('hidden');
+    
+    // 如果图片还没有src，设置一个占位符确保容器有尺寸
+    if (!resultImage.src || resultImage.src === window.location.href) {
+        // 创建一个透明占位图
+        const canvas = document.createElement('canvas');
+        canvas.width = 1024;
+        canvas.height = 1024;
+        resultImage.src = canvas.toDataURL();
+    }
+    
+    // 显示遮罩
+    loadingOverlay.classList.remove('hidden');
+    
+    const progressNumber = document.querySelector('.progress-number');
+    let progress = 0;
+    
+    // 清除之前的定时器
+    if (progressInterval) {
+        clearInterval(progressInterval);
+    }
+    
+    // 模拟进度：0-85%快速，85-97%慢速
+    progressInterval = setInterval(() => {
+        if (progress < 85) {
+            // 0-85%: 快速增长（每100ms增加3-8%）
+            progress += Math.random() * 5 + 3;
+            if (progress > 85) progress = 85;
+        } else if (progress < 97) {
+            // 85-97%: 慢速增长（每100ms增加0.3-0.8%）
+            progress += Math.random() * 0.5 + 0.3;
+            if (progress > 97) progress = 97;
+        }
+        
+        progressNumber.textContent = Math.floor(progress);
+    }, 100);
+}
+
+// 隐藏加载进度
+function hideLoadingProgress() {
+    if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+    }
+    
+    // 快速跳到100%
+    const progressNumber = document.querySelector('.progress-number');
+    progressNumber.textContent = '100';
+    
+    // 短暂延迟后隐藏遮罩
+    setTimeout(() => {
+        loadingOverlay.classList.add('hidden');
+        // 重置进度
+        setTimeout(() => {
+            progressNumber.textContent = '0';
+        }, 300);
+    }, 200);
 }
 
 // 国际化文本
@@ -61,6 +161,14 @@ const i18n = {
         'auth.placeholder': 'Enter access code',
         'auth.submit': 'Submit',
         'auth.error': 'Invalid access code',
+        'credits.cost': 'Cost:',
+        'credits.unit': 'credits',
+        'credits.insufficient': 'Insufficient credits. Please upgrade your plan.',
+        'plans.title': 'Subscription Plans',
+        'plans.current': 'Current Plan',
+        'plans.upgrade': 'Upgrade',
+        'plans.perMonth': '/month',
+        'plans.creditsPerMonth': 'credits/month',
         'edit.upload': 'Click to upload or drag image here',
         'edit.hint': 'JPG, PNG, WEBP · Max 20MB',
         'edit.remove': 'Remove',
@@ -108,6 +216,14 @@ const i18n = {
         'auth.placeholder': '输入访问码',
         'auth.submit': '提交',
         'auth.error': '访问码无效',
+        'credits.cost': '消耗：',
+        'credits.unit': '积分',
+        'credits.insufficient': '积分不足，请升级订阅方案',
+        'plans.title': '订阅方案',
+        'plans.current': '当前方案',
+        'plans.upgrade': '升级',
+        'plans.perMonth': '/月',
+        'plans.creditsPerMonth': '积分/月',
         'edit.upload': '点击上传或拖拽图片到此处',
         'edit.hint': 'JPG, PNG, WEBP · 最大 20MB',
         'edit.remove': '移除',
@@ -179,6 +295,13 @@ function switchLanguage(lang) {
     } else if (status.classList.contains('offline')) {
         status.querySelector('.text').textContent = i18n[lang]['status.offline'];
     }
+    
+    // 重新加载订阅方案（使用新语言）
+    if (currentUser) {
+        loadPlans();
+        // 更新按钮上的积分单位
+        updateUserInfo();
+    }
 }
 
 // 更新下载按钮文本
@@ -198,25 +321,150 @@ const savedLang = localStorage.getItem('preferred_lang') || 'en';
 currentLang = savedLang;
 
 // 内测码验证
-const ACCESS_CODE = 'ptp2025'; // 可以修改为你想要的内测码
 const AUTH_KEY = 'ptp_auth_token';
 
 function checkAuth() {
     const token = sessionStorage.getItem(AUTH_KEY);
-    if (token === ACCESS_CODE) {
-        authOverlay.classList.add('hidden');
-        return true;
+    if (token) {
+        currentAccessCode = token;
+        return authenticateUser(token);
     }
     return false;
 }
 
-submitCodeBtn.addEventListener('click', () => {
+// 用户认证
+async function authenticateUser(accessCode) {
+    try {
+        const response = await fetch('/api/auth', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ accessCode })
+        });
+        
+        if (!response.ok) {
+            return false;
+        }
+        
+        const data = await response.json();
+        if (data.success) {
+            currentUser = data.user;
+            currentAccessCode = accessCode;
+            updateUserInfo();
+            authOverlay.classList.add('hidden');
+            return true;
+        }
+        
+        return false;
+    } catch (error) {
+        console.error('Authentication failed:', error);
+        return false;
+    }
+}
+
+// 更新用户信息显示
+function updateUserInfo() {
+    if (!currentUser) return;
+    
+    userName.textContent = currentUser.username;
+    userPlan.textContent = currentUser.planName;
+    creditsCount.textContent = currentUser.credits;
+    
+    // 显示用户信息
+    userInfo.classList.remove('hidden');
+    
+    // 更新按钮上的积分消耗显示
+    if (currentUser.creditCost) {
+        const creditUnit = currentLang === 'zh' ? '积分' : 'credits';
+        
+        // Beta用户或免费用户不显示积分消耗
+        if (currentUser.plan === 'beta' || currentUser.creditCost.edit === 0) {
+            editBtnCredit.classList.add('hidden');
+            generateBtnCredit.classList.add('hidden');
+        } else {
+            editBtnCredit.textContent = `~ ${currentUser.creditCost.edit} ${creditUnit}`;
+            generateBtnCredit.textContent = `~ ${currentUser.creditCost.generate} ${creditUnit}`;
+            editBtnCredit.classList.remove('hidden');
+            generateBtnCredit.classList.remove('hidden');
+        }
+    }
+}
+
+// 加载订阅方案
+async function loadPlans() {
+    try {
+        const response = await fetch(`/api/plans?lang=${currentLang}`);
+        const data = await response.json();
+        
+        if (data.plans) {
+            renderPlans(data.plans);
+        }
+    } catch (error) {
+        console.error('Failed to load plans:', error);
+    }
+}
+
+// 渲染订阅方案
+function renderPlans(plans) {
+    plansGrid.innerHTML = '';
+    
+    plans.forEach(plan => {
+        const planCard = document.createElement('div');
+        planCard.className = 'plan-card';
+        
+        if (currentUser && currentUser.plan === plan.id) {
+            planCard.classList.add('current');
+        }
+        
+        const isCurrent = currentUser && currentUser.plan === plan.id;
+        const editLabel = currentLang === 'zh' ? '编辑' : 'Edit';
+        const generateLabel = currentLang === 'zh' ? '生成' : 'Generate';
+        
+        planCard.innerHTML = `
+            <div class="plan-header">
+                <h3>${plan.name}</h3>
+                <div class="plan-price">
+                    <span class="price">$${plan.price}</span>
+                    <span class="period">${i18n[currentLang]['plans.perMonth']}</span>
+                </div>
+            </div>
+            <div class="plan-credits">
+                <span class="credits-amount">${plan.credits}</span>
+                <span>${i18n[currentLang]['plans.creditsPerMonth']}</span>
+            </div>
+            <div class="plan-cost">
+                <span>${editLabel}: ${plan.creditCost.edit} ${i18n[currentLang]['credits.unit']}</span>
+                <span>${generateLabel}: ${plan.creditCost.generate} ${i18n[currentLang]['credits.unit']}</span>
+            </div>
+            <ul class="plan-features">
+                ${plan.features.map(f => `<li>${f}</li>`).join('')}
+            </ul>
+            <button class="plan-btn ${isCurrent ? 'current' : ''}" 
+                    ${isCurrent ? 'disabled' : ''}>
+                ${isCurrent ? i18n[currentLang]['plans.current'] : i18n[currentLang]['plans.upgrade']}
+            </button>
+        `;
+        
+        plansGrid.appendChild(planCard);
+    });
+    
+    plansSection.classList.remove('hidden');
+}
+
+submitCodeBtn.addEventListener('click', async () => {
     const code = accessCodeInput.value.trim();
-    if (code === ACCESS_CODE) {
+    if (!code) {
+        errorMessage.classList.remove('hidden');
+        return;
+    }
+    
+    const success = await authenticateUser(code);
+    if (success) {
         sessionStorage.setItem(AUTH_KEY, code);
-        authOverlay.classList.add('hidden');
         errorMessage.classList.add('hidden');
         checkHealth();
+        loadPlans();
     } else {
         errorMessage.classList.remove('hidden');
         accessCodeInput.value = '';
@@ -233,6 +481,9 @@ accessCodeInput.addEventListener('keypress', (e) => {
 // 页面加载时检查认证
 if (!checkAuth()) {
     accessCodeInput.focus();
+} else {
+    checkHealth();
+    loadPlans();
 }
 
 // 语言切换
@@ -361,12 +612,12 @@ uploadArea.addEventListener('drop', (e) => {
 
 function handleFile(file) {
     if (!file.type.startsWith('image/')) {
-        alert(i18n[currentLang]['error.noImage']);
+        showAlert(i18n[currentLang]['error.noImage']);
         return;
     }
     
     if (file.size > 20 * 1024 * 1024) {
-        alert(i18n[currentLang]['error.fileSize']);
+        showAlert(i18n[currentLang]['error.fileSize']);
         return;
     }
     
@@ -408,12 +659,15 @@ editBtn.addEventListener('click', async () => {
     const formData = new FormData();
     formData.append('image', selectedFile);
     formData.append('prompt', promptInput.value.trim());
+    formData.append('accessCode', currentAccessCode);
     
     // Show loading state
     editBtn.disabled = true;
     editBtn.querySelector('.btn-text').classList.add('hidden');
     editBtn.querySelector('.btn-loading').classList.remove('hidden');
-    resultSection.classList.add('hidden');
+    
+    // 显示加载进度
+    showLoadingProgress();
     
     try {
         const response = await fetch('/api/edit', {
@@ -423,14 +677,31 @@ editBtn.addEventListener('click', async () => {
         
         if (!response.ok) {
             const error = await response.json();
+            
+            // 积分不足
+            if (response.status === 402) {
+                throw new Error(i18n[currentLang]['credits.insufficient']);
+            }
+            
             throw new Error(error.error || 'Failed to process image');
         }
         
         const data = await response.json();
         
-        // Show result
-        resultImage.src = data.image;
-        resultSection.classList.remove('hidden');
+        // 更新积分余额
+        if (data.creditsRemaining !== undefined) {
+            creditsCount.textContent = data.creditsRemaining;
+            currentUser.credits = data.creditsRemaining;
+        }
+        
+        // 优先显示缩略图
+        resultImage.src = data.thumbnail || data.image;
+        
+        // 存储原图URL
+        currentOriginalImage = data.image;
+        
+        // 隐藏加载进度
+        hideLoadingProgress();
         
         // 更新下载按钮文本
         updateDownloadButtonText();
@@ -439,7 +710,9 @@ editBtn.addEventListener('click', async () => {
         resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         
     } catch (error) {
-        alert(`Error: ${error.message}`);
+        hideLoadingProgress();
+        resultSection.classList.add('hidden');
+        showAlert(`Error: ${error.message}`);
     } finally {
         // Reset button state
         editBtn.disabled = false;
@@ -451,12 +724,12 @@ editBtn.addEventListener('click', async () => {
 // Download result
 downloadBtn.addEventListener('click', async () => {
     if (isMobile) {
-        // 移动端：保存到相册
+        // 移动端：保存到相册（使用原图）
         await saveToAlbum();
     } else {
-        // PC端：直接下载
+        // PC端：直接下载原图
         const link = document.createElement('a');
-        link.href = resultImage.src;
+        link.href = currentOriginalImage || resultImage.src;
         link.download = `${currentMode}-${Date.now()}.png`;
         link.click();
     }
@@ -465,34 +738,16 @@ downloadBtn.addEventListener('click', async () => {
 // 保存图片到相册（移动端）
 async function saveToAlbum() {
     try {
-        // 创建canvas
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        const img = resultImage;
+        // 获取原图
+        const imageUrl = currentOriginalImage || resultImage.src;
         
-        // 等待图片加载
-        if (!img.complete) {
-            await new Promise((resolve, reject) => {
-                img.onload = resolve;
-                img.onerror = reject;
-            });
-        }
-        
-        // 设置canvas尺寸
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        
-        // 绘制图片
-        ctx.drawImage(img, 0, 0);
-        
-        // 转换为blob
-        const blob = await new Promise(resolve => {
-            canvas.toBlob(resolve, 'image/png');
-        });
+        // 下载原图
+        const response = await fetch(imageUrl);
+        const blob = await response.blob();
         
         // 尝试使用Web Share API（iOS Safari 和部分Android浏览器支持）
         if (navigator.share && navigator.canShare) {
-            const file = new File([blob], `image-${Date.now()}.png`, { type: 'image/png' });
+            const file = new File([blob], `image-${Date.now()}.png`, { type: blob.type });
             
             if (navigator.canShare({ files: [file] })) {
                 try {
@@ -558,7 +813,7 @@ function showToast(message) {
 generateBtn.addEventListener('click', async () => {
     const prompt = generatePrompt.value.trim();
     if (!prompt) {
-        alert(i18n[currentLang]['error.noPrompt']);
+        showAlert(i18n[currentLang]['error.noPrompt']);
         return;
     }
     
@@ -569,12 +824,12 @@ generateBtn.addEventListener('click', async () => {
     
     // Validate parameters
     if (width < 256 || width > 2048 || height < 256 || height > 2048) {
-        alert(i18n[currentLang]['error.invalidSize']);
+        showAlert(i18n[currentLang]['error.invalidSize']);
         return;
     }
     
     if (steps < 1 || steps > 50) {
-        alert(i18n[currentLang]['error.invalidSteps']);
+        showAlert(i18n[currentLang]['error.invalidSteps']);
         return;
     }
     
@@ -582,7 +837,9 @@ generateBtn.addEventListener('click', async () => {
     generateBtn.disabled = true;
     generateBtn.querySelector('.btn-text').classList.add('hidden');
     generateBtn.querySelector('.btn-loading').classList.remove('hidden');
-    resultSection.classList.add('hidden');
+    
+    // 显示加载进度
+    showLoadingProgress();
     
     try {
         const response = await fetch('/api/generate', {
@@ -595,20 +852,38 @@ generateBtn.addEventListener('click', async () => {
                 width: width,
                 height: height,
                 steps: steps,
-                cfg: cfg
+                cfg: cfg,
+                accessCode: currentAccessCode
             })
         });
         
         if (!response.ok) {
             const error = await response.json();
+            
+            // 积分不足
+            if (response.status === 402) {
+                throw new Error(i18n[currentLang]['credits.insufficient']);
+            }
+            
             throw new Error(error.error || 'Failed to generate image');
         }
         
         const data = await response.json();
         
-        // Show result
-        resultImage.src = data.image;
-        resultSection.classList.remove('hidden');
+        // 更新积分余额
+        if (data.creditsRemaining !== undefined) {
+            creditsCount.textContent = data.creditsRemaining;
+            currentUser.credits = data.creditsRemaining;
+        }
+        
+        // 优先显示缩略图
+        resultImage.src = data.thumbnail || data.image;
+        
+        // 存储原图URL
+        currentOriginalImage = data.image;
+        
+        // 隐藏加载进度
+        hideLoadingProgress();
         
         // 更新下载按钮文本
         updateDownloadButtonText();
@@ -617,7 +892,9 @@ generateBtn.addEventListener('click', async () => {
         resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         
     } catch (error) {
-        alert(`Error: ${error.message}`);
+        hideLoadingProgress();
+        resultSection.classList.add('hidden');
+        showAlert(`Error: ${error.message}`);
     } finally {
         // Reset button state
         generateBtn.disabled = false;
@@ -630,4 +907,5 @@ generateBtn.addEventListener('click', async () => {
 if (checkAuth()) {
     checkHealth();
     setInterval(checkHealth, 30000); // Check every 30 seconds
+    loadPlans();
 }

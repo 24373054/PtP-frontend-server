@@ -107,16 +107,26 @@ fetch('https://ptp.matrixlabs.cn/api/edit', {
 {
   "success": true,
   "image": "/outputs/abc123.png",
+  "thumbnail": "/outputs/thumb_abc123.jpg",
   "prompt": "Replace the background with a sunset beach scene"
 }
 ```
 
 **Response Fields**:
 - `success` (boolean): Whether the operation succeeded
-- `image` (string): Relative URL path to the generated image
+- `image` (string): Relative URL path to the original high-resolution image
+- `thumbnail` (string): Relative URL path to the thumbnail (800px width, optimized for fast preview)
 - `prompt` (string): The prompt that was used
 
-**Full Image URL**: `https://ptp.matrixlabs.cn/outputs/abc123.png`
+**Full Image URLs**: 
+- Original: `https://ptp.matrixlabs.cn/outputs/abc123.png`
+- Thumbnail: `https://ptp.matrixlabs.cn/outputs/thumb_abc123.jpg`
+
+**Performance Optimization**:
+- The API returns both original and thumbnail URLs
+- Thumbnail is ~10-20% the size of the original for faster loading
+- Use `thumbnail` for preview/display, `image` for download/save
+- Thumbnail: 800px max width, JPEG format, 85% quality
 
 **Processing Time**: Typically 10-30 seconds depending on image size and complexity
 
@@ -228,6 +238,7 @@ fetch('https://ptp.matrixlabs.cn/api/generate', {
 {
   "success": true,
   "image": "/outputs/xyz789.png",
+  "thumbnail": "/outputs/thumb_xyz789.jpg",
   "prompt": "A vintage motorcycle parked in front of a retro diner at sunset...",
   "width": 1024,
   "height": 1024,
@@ -237,13 +248,22 @@ fetch('https://ptp.matrixlabs.cn/api/generate', {
 
 **Response Fields**:
 - `success` (boolean): Whether the operation succeeded
-- `image` (string): Relative URL path to the generated image
+- `image` (string): Relative URL path to the original high-resolution image
+- `thumbnail` (string): Relative URL path to the thumbnail (800px width, optimized for fast preview)
 - `prompt` (string): The prompt that was used
 - `width` (integer): Generated image width
 - `height` (integer): Generated image height
 - `seed` (integer): Random seed used (for reproducibility)
 
-**Full Image URL**: `https://ptp.matrixlabs.cn/outputs/xyz789.png`
+**Full Image URLs**: 
+- Original: `https://ptp.matrixlabs.cn/outputs/xyz789.png`
+- Thumbnail: `https://ptp.matrixlabs.cn/outputs/thumb_xyz789.jpg`
+
+**Performance Optimization**:
+- The API returns both original and thumbnail URLs
+- Thumbnail is ~10-20% the size of the original for faster loading
+- Use `thumbnail` for preview/display, `image` for download/save
+- Thumbnail: 800px max width, JPEG format, 85% quality
 
 **Processing Time**: Typically 5-15 seconds depending on resolution (Flux2 Klein is optimized for fast inference)
 

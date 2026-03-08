@@ -21,6 +21,16 @@
         </div>
     </div>
 
+    <!-- 自定义弹窗 -->
+    <div class="custom-alert-overlay hidden" id="customAlertOverlay">
+        <div class="custom-alert">
+            <div class="custom-alert-content" id="customAlertContent"></div>
+            <button class="btn-primary" id="customAlertBtn">
+                <span class="btn-text">OK</span>
+            </button>
+        </div>
+    </div>
+
     <div class="container">
         <header>
             <h1 data-i18n="title">Image Generator</h1>
@@ -28,6 +38,16 @@
                 <button class="lang-switch" id="langSwitch">
                     <span class="lang-text">中文</span>
                 </button>
+                <div class="user-info hidden" id="userInfo">
+                    <div class="user-badge">
+                        <span class="user-name" id="userName">User</span>
+                        <span class="user-plan" id="userPlan">Free</span>
+                    </div>
+                    <div class="credits-badge">
+                        <i class="ph-bold ph-lightning"></i>
+                        <span class="credits-count" id="creditsCount">0</span>
+                    </div>
+                </div>
                 <div class="status" id="status">
                     <span class="dot"></span>
                     <span class="text" data-i18n="status.checking">Checking...</span>
@@ -76,7 +96,10 @@
 
                 <section class="action-section">
                     <button class="btn-primary" id="editBtn" disabled>
-                        <span class="btn-text" data-i18n="edit.button">Edit Image</span>
+                        <span class="btn-text">
+                            <span data-i18n="edit.button">Edit Image</span>
+                            <span class="btn-credit hidden" id="editBtnCredit">~ 2 credits</span>
+                        </span>
                         <span class="btn-loading hidden">
                             <span class="spinner"></span>
                             <span data-i18n="edit.processing">Processing...</span>
@@ -158,7 +181,10 @@
 
                 <section class="action-section">
                     <button class="btn-primary" id="generateBtn">
-                        <span class="btn-text" data-i18n="generate.button">Generate Image</span>
+                        <span class="btn-text">
+                            <span data-i18n="generate.button">Generate Image</span>
+                            <span class="btn-credit hidden" id="generateBtnCredit">~ 1 credits</span>
+                        </span>
                         <span class="btn-loading hidden">
                             <span class="spinner"></span>
                             <span data-i18n="generate.generating">Generating...</span>
@@ -176,6 +202,20 @@
                 </div>
                 <div class="result-image">
                     <img id="resultImage" alt="Result" crossorigin="anonymous">
+                    <!-- 加载遮罩 -->
+                    <div class="loading-overlay hidden" id="loadingOverlay">
+                        <div class="progress-text">
+                            <span class="progress-number">0</span>%
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 订阅方案 -->
+            <section class="plans-section hidden" id="plansSection">
+                <h2 data-i18n="plans.title">Subscription Plans</h2>
+                <div class="plans-grid" id="plansGrid">
+                    <!-- Plans will be loaded dynamically -->
                 </div>
             </section>
         </main>
