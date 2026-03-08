@@ -4,78 +4,178 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Image Editor</title>
+    <link rel="stylesheet" href="phosphor-bold.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <!-- 内测码验证弹窗 -->
     <div class="auth-overlay" id="authOverlay">
         <div class="auth-modal">
-            <h2>Access Code Required</h2>
-            <p>Enter the beta access code to continue</p>
-            <input type="password" id="accessCode" placeholder="Enter access code" autocomplete="off">
+            <h2 data-i18n="auth.title">Access Code Required</h2>
+            <p data-i18n="auth.description">Enter the beta access code to continue</p>
+            <input type="password" id="accessCode" data-i18n-placeholder="auth.placeholder" placeholder="Enter access code" autocomplete="off">
             <button class="btn-primary" id="submitCode">
-                <span class="btn-text">Submit</span>
+                <span class="btn-text" data-i18n="auth.submit">Submit</span>
             </button>
-            <div class="error-message hidden" id="errorMessage">Invalid access code</div>
+            <div class="error-message hidden" id="errorMessage" data-i18n="auth.error">Invalid access code</div>
         </div>
     </div>
 
     <div class="container">
         <header>
-            <h1>Image Editor</h1>
-            <div class="status" id="status">
-                <span class="dot"></span>
-                <span class="text">Checking...</span>
+            <h1 data-i18n="title">Image Generator</h1>
+            <div class="header-actions">
+                <button class="lang-switch" id="langSwitch">
+                    <span class="lang-text">中文</span>
+                </button>
+                <div class="status" id="status">
+                    <span class="dot"></span>
+                    <span class="text" data-i18n="status.checking">Checking...</span>
+                </div>
             </div>
         </header>
 
+        <!-- 模式切换 -->
+        <div class="mode-tabs">
+            <button class="tab-btn active" data-mode="edit" data-i18n="tabs.edit">Edit Image</button>
+            <button class="tab-btn" data-mode="generate" data-i18n="tabs.generate">Generate Image</button>
+        </div>
+
         <main>
-            <section class="upload-section">
-                <div class="upload-area" id="uploadArea">
-                    <input type="file" id="fileInput" accept="image/*" hidden>
-                    <div class="upload-content">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                            <polyline points="17 8 12 3 7 8"></polyline>
-                            <line x1="12" y1="3" x2="12" y2="15"></line>
-                        </svg>
-                        <p>Click to upload or drag image here</p>
-                        <span class="hint">JPG, PNG, WEBP · Max 20MB</span>
+            <!-- I2I 编辑模式 -->
+            <div class="mode-content active" id="editMode">
+                <section class="upload-section">
+                    <div class="upload-area" id="uploadArea">
+                        <input type="file" id="fileInput" accept="image/*" hidden>
+                        <div class="upload-content">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            <p data-i18n="edit.upload">Click to upload or drag image here</p>
+                            <span class="hint" data-i18n="edit.hint">JPG, PNG, WEBP · Max 20MB</span>
+                        </div>
                     </div>
-                </div>
 
-                <div class="preview-area hidden" id="previewArea">
-                    <img id="previewImage" alt="Preview">
-                    <button class="btn-text" id="removeBtn">Remove</button>
-                </div>
-            </section>
+                    <div class="preview-area hidden" id="previewArea">
+                        <img id="previewImage" alt="Preview">
+                        <button class="btn-text" id="removeBtn" data-i18n="edit.remove">Remove</button>
+                    </div>
+                </section>
 
-            <section class="prompt-section">
-                <label for="promptInput">Edit Instructions</label>
-                <textarea 
-                    id="promptInput" 
-                    placeholder="Describe how you want to edit the image...&#10;&#10;Example: Replace the background with a quiet coastal cliff at overcast sunset. Remove all buildings and streets. Add wind-shaped grass and a distant ocean horizon. Keep the subject's pose and framing unchanged."
-                    rows="6"
-                ></textarea>
-            </section>
+                <section class="prompt-section">
+                    <label for="promptInput" data-i18n="edit.label">Edit Instructions</label>
+                    <textarea 
+                        id="promptInput" 
+                        data-i18n-placeholder="edit.placeholder"
+                        placeholder="Describe how you want to edit the image...&#10;&#10;Example: Replace the background with a quiet coastal cliff at overcast sunset. Remove all buildings and streets. Add wind-shaped grass and a distant ocean horizon. Keep the subject's pose and framing unchanged."
+                        rows="6"
+                    ></textarea>
+                </section>
 
-            <section class="action-section">
-                <button class="btn-primary" id="editBtn" disabled>
-                    <span class="btn-text">Edit Image</span>
-                    <span class="btn-loading hidden">
-                        <span class="spinner"></span>
-                        Processing...
-                    </span>
-                </button>
-            </section>
+                <section class="action-section">
+                    <button class="btn-primary" id="editBtn" disabled>
+                        <span class="btn-text" data-i18n="edit.button">Edit Image</span>
+                        <span class="btn-loading hidden">
+                            <span class="spinner"></span>
+                            <span data-i18n="edit.processing">Processing...</span>
+                        </span>
+                    </button>
+                </section>
+            </div>
+
+            <!-- T2I 生成模式 -->
+            <div class="mode-content" id="generateMode">
+                <section class="prompt-section">
+                    <label for="generatePrompt" data-i18n="generate.label">Image Description</label>
+                    <textarea 
+                        id="generatePrompt" 
+                        data-i18n-placeholder="generate.placeholder"
+                        placeholder="Describe the image you want to generate...&#10;&#10;Example: A serene mountain landscape at dawn, misty valleys, golden sunlight piercing through clouds, photorealistic, 8k quality"
+                        rows="6"
+                    ></textarea>
+                    
+                    <!-- 预设模板 -->
+                    <div class="prompt-templates">
+                        <button class="template-btn" data-template="selfie">
+                            <i class="ph-bold ph-camera"></i>
+                            <span class="template-text" data-i18n="generate.template.selfie">Casual Selfie</span>
+                        </button>
+                        <button class="template-btn" data-template="desk">
+                            <i class="ph-bold ph-desktop"></i>
+                            <span class="template-text" data-i18n="generate.template.desk">Office Desk</span>
+                        </button>
+                        <button class="template-btn" data-template="coffee">
+                            <i class="ph-bold ph-coffee"></i>
+                            <span class="template-text" data-i18n="generate.template.coffee">Coffee Table</span>
+                        </button>
+                        <button class="template-btn" data-template="kitchen">
+                            <i class="ph-bold ph-cooking-pot"></i>
+                            <span class="template-text" data-i18n="generate.template.kitchen">Kitchen</span>
+                        </button>
+                        <button class="template-btn" data-template="bedroom">
+                            <i class="ph-bold ph-bed"></i>
+                            <span class="template-text" data-i18n="generate.template.bedroom">Bedroom</span>
+                        </button>
+                        <button class="template-btn" data-template="outdoor">
+                            <i class="ph-bold ph-tent"></i>
+                            <span class="template-text" data-i18n="generate.template.outdoor">Outdoor</span>
+                        </button>
+                        <button class="template-btn" data-template="luxury">
+                            <i class="ph-bold ph-diamond"></i>
+                            <span class="template-text" data-i18n="generate.template.luxury">Luxury</span>
+                        </button>
+                        <button class="template-btn" data-template="portrait">
+                            <i class="ph-bold ph-user-circle"></i>
+                            <span class="template-text" data-i18n="generate.template.portrait">Portrait</span>
+                        </button>
+                        <button class="template-btn" data-template="nature">
+                            <i class="ph-bold ph-tree"></i>
+                            <span class="template-text" data-i18n="generate.template.nature">Nature</span>
+                        </button>
+                    </div>
+                </section>
+
+                <section class="params-section">
+                    <div class="param-group">
+                        <label for="widthInput" data-i18n="generate.width">Width</label>
+                        <input type="number" id="widthInput" value="1024" min="256" max="2048" step="64">
+                    </div>
+                    <div class="param-group">
+                        <label for="heightInput" data-i18n="generate.height">Height</label>
+                        <input type="number" id="heightInput" value="1024" min="256" max="2048" step="64">
+                    </div>
+                    <div class="param-group">
+                        <label for="stepsInput" data-i18n="generate.steps">Steps</label>
+                        <input type="number" id="stepsInput" value="4" min="1" max="50">
+                    </div>
+                    <div class="param-group">
+                        <label for="cfgInput" data-i18n="generate.cfg">CFG</label>
+                        <input type="number" id="cfgInput" value="1.0" min="0" max="10" step="0.1">
+                    </div>
+                </section>
+
+                <section class="action-section">
+                    <button class="btn-primary" id="generateBtn">
+                        <span class="btn-text" data-i18n="generate.button">Generate Image</span>
+                        <span class="btn-loading hidden">
+                            <span class="spinner"></span>
+                            <span data-i18n="generate.generating">Generating...</span>
+                        </span>
+                    </button>
+                </section>
+            </div>
 
             <section class="result-section hidden" id="resultSection">
                 <div class="result-header">
-                    <h2>Result</h2>
-                    <button class="btn-text" id="downloadBtn">Download</button>
+                    <h2 data-i18n="result.title">Result</h2>
+                    <button class="btn-text" id="downloadBtn">
+                        <span class="download-text" data-i18n="result.download">Download</span>
+                    </button>
                 </div>
                 <div class="result-image">
-                    <img id="resultImage" alt="Result">
+                    <img id="resultImage" alt="Result" crossorigin="anonymous">
                 </div>
             </section>
         </main>
