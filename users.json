@@ -20,8 +20,8 @@
     "email": "free@example.com",
     "plan": "free",
     "planName": "free User",
-    "credits": 0,
-    "usedCredits": 4,
+    "credits": 163,
+    "usedCredits": 41,
     "createdAt": "2026-03-08T00:00:00.000Z",
     "expiresAt": null,
     "creditCost": {
