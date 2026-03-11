@@ -9,7 +9,17 @@ const sharp = require('sharp');
 
 const app = express();
 const PORT = 38024;
-const COMFYUI_URL = 'http://127.0.0.1:8188';
+
+// 多个ComfyUI实例配置
+const COMFYUI_INSTANCES = [
+    'http://127.0.0.1:8188',  // GPU 4
+    'http://127.0.0.1:8189',  // GPU 5
+    'http://127.0.0.1:8190',  // GPU 6
+    'http://127.0.0.1:8191'   // GPU 7
+];
+
+// 单实例模式（向后兼容）
+const COMFYUI_URL = COMFYUI_INSTANCES[0];
 
 // 用户数据文件路径
 const USERS_FILE = path.join(__dirname, 'users.json');
@@ -374,7 +384,7 @@ function generateP2PWorkflow(imageName, prompt, seed) {
 }
 
 // 生成T2I工作流（文字生成图片）
-function generateT2IWorkflow(prompt, width, height, seed, steps, cfg) {
+function generateT2IWorkflow(prompt, width, height, seed, steps, cfg, filenamePrefix = 't2i-gen') {
     return {
         "76": {
             "inputs": {
@@ -384,7 +394,7 @@ function generateT2IWorkflow(prompt, width, height, seed, steps, cfg) {
         },
         "78": {
             "inputs": {
-                "filename_prefix": "t2i-gen",
+                "filename_prefix": filenamePrefix,
                 "images": ["77:65", 0]
             },
             "class_type": "SaveImage"
@@ -518,6 +528,124 @@ async function generateThumbnail(imagePath, thumbnailPath, maxWidth = 800) {
     }
 }
 
+// 合成四宫格图片
+async function createGridImage(imagePaths, outputPath) {
+    try {
+        // 读取所有图片
+        const images = await Promise.all(
+            imagePaths.map(p => sharp(p).metadata().then(meta => ({ path: p, meta })))
+        );
+        
+        // 假设所有图片尺寸相同，取第一张的尺寸
+        const width = images[0].meta.width;
+        const height = images[0].meta.height;
+        
+        // 创建2x2网格
+        const gridWidth = width * 2;
+        const gridHeight = height * 2;
+        
+        // 读取并调整所有图片
+        const buffers = await Promise.all(
+            imagePaths.map(p => sharp(p).toBuffer())
+        );
+        
+        // 创建四宫格
+        await sharp({
+            create: {
+                width: gridWidth,
+                height: gridHeight,
+                channels: 3,
+                background: { r: 255, g: 255, b: 255 }
+            }
+        })
+        .composite([
+            { input: buffers[0], left: 0, top: 0 },           // 左上
+            { input: buffers[1], left: width, top: 0 },       // 右上
+            { input: buffers[2], left: 0, top: height },      // 左下
+            { input: buffers[3], left: width, top: height }   // 右下
+        ])
+        .png()
+        .toFile(outputPath);
+        
+        return true;
+    } catch (error) {
+        console.error('Grid creation failed:', error);
+        return false;
+    }
+}
+
+// 并行生成多张图片
+async function generateImagesParallel(prompt, width, height, seed, steps, cfg, count = 4) {
+    const promises = [];
+    const batchId = Date.now().toString(36); // 唯一批次ID
+    
+    for (let i = 0; i < count; i++) {
+        const instanceUrl = COMFYUI_INSTANCES[i % COMFYUI_INSTANCES.length];
+        // 每张图片使用完全独立的随机seed，避免相似结果
+        const imageSeed = Math.floor(Math.random() * 1000000000000000);
+        // 每个实例使用唯一的filename_prefix，避免共享输出目录时文件名冲突
+        const filenamePrefix = `grid-${batchId}-gpu${i}`;
+        
+        const workflow = generateT2IWorkflow(prompt, width, height, imageSeed, steps, cfg, filenamePrefix);
+        
+        promises.push(
+            queuePromptToInstance(instanceUrl, workflow)
+                .then(promptId => waitForCompletionFromInstance(instanceUrl, promptId))
+                .then(result => downloadImageFromInstance(instanceUrl, result))
+        );
+    }
+    
+    return Promise.all(promises);
+}
+
+// 提交工作流到指定实例
+async function queuePromptToInstance(instanceUrl, workflow) {
+    const response = await axios.post(`${instanceUrl}/prompt`, {
+        prompt: workflow,
+        client_id: uuidv4()
+    });
+    return response.data.prompt_id;
+}
+
+// 从指定实例等待完成
+async function waitForCompletionFromInstance(instanceUrl, promptId, timeout = 300000) {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+        try {
+            const historyRes = await axios.get(`${instanceUrl}/history/${promptId}`);
+            const history = historyRes.data[promptId];
+            
+            if (history && history.status && history.status.completed) {
+                const outputs = history.outputs;
+                for (const nodeId in outputs) {
+                    if (outputs[nodeId].images) {
+                        return outputs[nodeId].images[0];
+                    }
+                }
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (error) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    }
+    
+    throw new Error('Timeout waiting for image generation');
+}
+
+// 从指定实例下载图片
+async function downloadImageFromInstance(instanceUrl, result) {
+    const imageUrl = `${instanceUrl}/view?filename=${result.filename}&subfolder=${result.subfolder || ''}&type=${result.type}`;
+    const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+    
+    const outputFilename = `${uuidv4()}.png`;
+    const outputPath = path.join(OUTPUT_DIR, outputFilename);
+    fs.writeFileSync(outputPath, imageResponse.data);
+    
+    return outputPath;
+}
+
 // 轮询检查任务状态
 async function waitForCompletion(promptId, timeout = 300000) {
     const startTime = Date.now();
@@ -546,7 +674,172 @@ async function waitForCompletion(promptId, timeout = 300000) {
     throw new Error('Timeout waiting for image generation');
 }
 
-// API: 文字生成图片
+// 流式轮询检查任务状态（支持进度推送）
+async function waitForCompletionStream(promptId, onProgress, timeout = 300000) {
+    const startTime = Date.now();
+    let lastProgress = 0;
+    
+    while (Date.now() - startTime < timeout) {
+        try {
+            // 获取队列状态
+            const queueRes = await axios.get(`${COMFYUI_URL}/queue`);
+            const queue = queueRes.data;
+            
+            // 检查是否在运行队列中
+            const runningItem = queue.queue_running.find(item => item[1] === promptId);
+            if (runningItem) {
+                // 任务正在执行
+                const progress = Math.min(50 + lastProgress * 0.5, 85);
+                onProgress({ status: 'processing', progress: Math.floor(progress) });
+                lastProgress = progress;
+            }
+            
+            // 检查历史记录
+            const historyRes = await axios.get(`${COMFYUI_URL}/history/${promptId}`);
+            const history = historyRes.data[promptId];
+            
+            if (history && history.status) {
+                if (history.status.completed) {
+                    // 任务完成
+                    onProgress({ status: 'completed', progress: 100 });
+                    
+                    const outputs = history.outputs;
+                    for (const nodeId in outputs) {
+                        if (outputs[nodeId].images) {
+                            return outputs[nodeId].images[0];
+                        }
+                    }
+                } else if (history.status.status_str) {
+                    // 推送状态信息
+                    const progress = Math.min(30 + lastProgress * 0.3, 70);
+                    onProgress({ 
+                        status: 'processing', 
+                        progress: Math.floor(progress),
+                        message: history.status.status_str 
+                    });
+                    lastProgress = progress;
+                }
+            } else {
+                // 任务在队列中等待
+                const pendingItem = queue.queue_pending.find(item => item[1] === promptId);
+                if (pendingItem) {
+                    const queuePosition = queue.queue_pending.indexOf(pendingItem) + 1;
+                    onProgress({ 
+                        status: 'queued', 
+                        progress: 10,
+                        message: `Queue position: ${queuePosition}` 
+                    });
+                }
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (error) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    }
+    
+    throw new Error('Timeout waiting for image generation');
+}
+
+// API: 文字生成图片（四宫格并行模式）
+app.post('/api/generate-grid', async (req, res) => {
+    try {
+        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1, accessCode } = req.body;
+        
+        if (!accessCode) {
+            return res.status(401).json({ error: 'Access code is required' });
+        }
+        
+        // 验证用户
+        const user = authenticateUser(accessCode);
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid access code' });
+        }
+        
+        // 检查并扣除积分（生成4张图片，消耗4倍积分）
+        const creditResult = deductCredits(accessCode, 'generate');
+        if (!creditResult.success) {
+            return res.status(402).json({ 
+                error: creditResult.error,
+                credits: creditResult.credits,
+                required: creditResult.required
+            });
+        }
+        
+        // 再扣除3次（总共4次）
+        for (let i = 0; i < 3; i++) {
+            const extraCredit = deductCredits(accessCode, 'generate');
+            if (!extraCredit.success) {
+                return res.status(402).json({ 
+                    error: 'Insufficient credits for 4 images',
+                    credits: extraCredit.credits,
+                    required: extraCredit.required
+                });
+            }
+        }
+        
+        if (!prompt || prompt.trim() === '') {
+            return res.status(400).json({ error: 'Prompt is required' });
+        }
+        
+        // 验证参数
+        if (width < 256 || width > 2048 || height < 256 || height > 2048) {
+            return res.status(400).json({ error: 'Width and height must be between 256 and 2048' });
+        }
+        
+        if (steps < 1 || steps > 50) {
+            return res.status(400).json({ error: 'Steps must be between 1 and 50' });
+        }
+        
+        const seed = Math.floor(Math.random() * 1000000000000000);
+        
+        console.log(`🎨 开始并行生成4张图片...`);
+        console.log(`   提示词: ${prompt.substring(0, 50)}...`);
+        console.log(`   使用GPU: 4个实例并行`);
+        
+        // 并行生成4张图片
+        const imagePaths = await generateImagesParallel(prompt, width, height, seed, steps, cfg, 4);
+        
+        console.log(`✅ 4张图片生成完成，开始合成四宫格...`);
+        
+        // 合成四宫格
+        const gridFilename = `grid_${uuidv4()}.png`;
+        const gridPath = path.join(OUTPUT_DIR, gridFilename);
+        await createGridImage(imagePaths, gridPath);
+        
+        console.log(`✅ 四宫格合成完成: ${gridFilename}`);
+        
+        // 生成缩略图
+        const thumbnailFilename = `thumb_${gridFilename.replace('.png', '.jpg')}`;
+        const thumbnailPath = path.join(OUTPUT_DIR, thumbnailFilename);
+        await generateThumbnail(gridPath, thumbnailPath, 1200);
+        
+        // 清理单独的图片文件（可选，如果想保留可以注释掉）
+        // imagePaths.forEach(p => fs.unlinkSync(p));
+        
+        res.json({
+            success: true,
+            image: `/outputs/${gridFilename}`,
+            thumbnail: `/outputs/${thumbnailFilename}`,
+            individual_images: imagePaths.map(p => `/outputs/${path.basename(p)}`),
+            prompt: prompt,
+            width: width * 2,  // 四宫格宽度
+            height: height * 2, // 四宫格高度
+            seed: seed,
+            creditsUsed: creditResult.cost * 4,
+            creditsRemaining: creditResult.credits
+        });
+        
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ 
+            error: 'Failed to generate grid image',
+            details: error.message 
+        });
+    }
+});
+
+// API: 文字生成图片（原单张模式，保持向后兼容）
 app.post('/api/generate', async (req, res) => {
     try {
         const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1, accessCode } = req.body;
@@ -627,6 +920,125 @@ app.post('/api/generate', async (req, res) => {
     }
 });
 
+// API: 文字生成图片（流式SSE版本）
+app.post('/api/generate-stream', async (req, res) => {
+    try {
+        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1, accessCode } = req.body;
+        
+        if (!accessCode) {
+            return res.status(401).json({ error: 'Access code is required' });
+        }
+        
+        // 验证用户
+        const user = authenticateUser(accessCode);
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid access code' });
+        }
+        
+        // 检查并扣除积分
+        const creditResult = deductCredits(accessCode, 'generate');
+        if (!creditResult.success) {
+            return res.status(402).json({ 
+                error: creditResult.error,
+                credits: creditResult.credits,
+                required: creditResult.required
+            });
+        }
+        
+        if (!prompt || prompt.trim() === '') {
+            return res.status(400).json({ error: 'Prompt is required' });
+        }
+        
+        // 验证参数
+        if (width < 256 || width > 2048 || height < 256 || height > 2048) {
+            return res.status(400).json({ error: 'Width and height must be between 256 and 2048' });
+        }
+        
+        if (steps < 1 || steps > 50) {
+            return res.status(400).json({ error: 'Steps must be between 1 and 50' });
+        }
+        
+        // 设置SSE响应头
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no'); // 禁用nginx缓冲
+        
+        const sendEvent = (data) => {
+            res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+        
+        try {
+            const seed = Math.floor(Math.random() * 1000000000000000);
+            
+            // 发送初始化事件
+            sendEvent({ status: 'initializing', progress: 5, message: 'Preparing workflow...' });
+            
+            // 生成并提交工作流
+            const workflow = generateT2IWorkflow(prompt, width, height, seed, steps, cfg);
+            const promptId = await queuePrompt(workflow);
+            
+            sendEvent({ status: 'queued', progress: 15, message: 'Workflow submitted...' });
+            
+            // 等待完成并推送进度
+            const result = await waitForCompletionStream(promptId, (progressData) => {
+                sendEvent(progressData);
+            });
+            
+            sendEvent({ status: 'downloading', progress: 90, message: 'Downloading result...' });
+            
+            // 下载结果图片
+            const imageUrl = `${COMFYUI_URL}/view?filename=${result.filename}&subfolder=${result.subfolder || ''}&type=${result.type}`;
+            const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+            
+            const outputFilename = `${uuidv4()}.png`;
+            const outputPath = path.join(OUTPUT_DIR, outputFilename);
+            fs.writeFileSync(outputPath, imageResponse.data);
+            
+            sendEvent({ status: 'processing', progress: 95, message: 'Generating thumbnail...' });
+            
+            // 生成缩略图
+            const thumbnailFilename = `thumb_${outputFilename.replace('.png', '.jpg')}`;
+            const thumbnailPath = path.join(OUTPUT_DIR, thumbnailFilename);
+            await generateThumbnail(outputPath, thumbnailPath, 800);
+            
+            // 发送完成事件
+            sendEvent({
+                status: 'completed',
+                progress: 100,
+                result: {
+                    success: true,
+                    image: `/outputs/${outputFilename}`,
+                    thumbnail: `/outputs/${thumbnailFilename}`,
+                    prompt: prompt,
+                    width: width,
+                    height: height,
+                    seed: seed,
+                    creditsUsed: creditResult.cost,
+                    creditsRemaining: creditResult.credits
+                }
+            });
+            
+            res.end();
+            
+        } catch (error) {
+            console.error('Stream error:', error);
+            sendEvent({
+                status: 'error',
+                error: error.message || 'Failed to generate image'
+            });
+            res.end();
+        }
+        
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ 
+            error: 'Failed to generate image',
+            details: error.message 
+        });
+    }
+});
+
 // API: 编辑图片
 app.post('/api/edit', upload.single('image'), async (req, res) => {
     try {
@@ -694,6 +1106,123 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
             creditsUsed: creditResult.cost,
             creditsRemaining: creditResult.credits
         });
+        
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ 
+            error: 'Failed to process image',
+            details: error.message 
+        });
+    }
+});
+
+// API: 编辑图片（流式SSE版本）
+app.post('/api/edit-stream', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No image uploaded' });
+        }
+        
+        const { prompt, accessCode } = req.body;
+        
+        if (!accessCode) {
+            return res.status(401).json({ error: 'Access code is required' });
+        }
+        
+        // 验证用户
+        const user = authenticateUser(accessCode);
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid access code' });
+        }
+        
+        // 检查并扣除积分
+        const creditResult = deductCredits(accessCode, 'edit');
+        if (!creditResult.success) {
+            return res.status(402).json({ 
+                error: creditResult.error,
+                credits: creditResult.credits,
+                required: creditResult.required
+            });
+        }
+        
+        if (!prompt || prompt.trim() === '') {
+            return res.status(400).json({ error: 'Prompt is required' });
+        }
+        
+        // 设置SSE响应头
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        
+        const sendEvent = (data) => {
+            res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+        
+        try {
+            const imageName = req.file.filename;
+            const seed = Math.floor(Math.random() * 1000000000000000);
+            
+            // 发送初始化事件
+            sendEvent({ status: 'initializing', progress: 5, message: 'Uploading image...' });
+            
+            // 上传图片到ComfyUI
+            await uploadImageToComfyUI(req.file.path, imageName);
+            
+            sendEvent({ status: 'preparing', progress: 15, message: 'Preparing workflow...' });
+            
+            // 生成并提交工作流
+            const workflow = generateP2PWorkflow(imageName, prompt, seed);
+            const promptId = await queuePrompt(workflow);
+            
+            sendEvent({ status: 'queued', progress: 20, message: 'Workflow submitted...' });
+            
+            // 等待完成并推送进度
+            const result = await waitForCompletionStream(promptId, (progressData) => {
+                sendEvent(progressData);
+            });
+            
+            sendEvent({ status: 'downloading', progress: 90, message: 'Downloading result...' });
+            
+            // 下载结果图片
+            const imageUrl = `${COMFYUI_URL}/view?filename=${result.filename}&subfolder=${result.subfolder || ''}&type=${result.type}`;
+            const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+            
+            const outputFilename = `${uuidv4()}.png`;
+            const outputPath = path.join(OUTPUT_DIR, outputFilename);
+            fs.writeFileSync(outputPath, imageResponse.data);
+            
+            sendEvent({ status: 'processing', progress: 95, message: 'Generating thumbnail...' });
+            
+            // 生成缩略图
+            const thumbnailFilename = `thumb_${outputFilename.replace('.png', '.jpg')}`;
+            const thumbnailPath = path.join(OUTPUT_DIR, thumbnailFilename);
+            await generateThumbnail(outputPath, thumbnailPath, 800);
+            
+            // 发送完成事件
+            sendEvent({
+                status: 'completed',
+                progress: 100,
+                result: {
+                    success: true,
+                    image: `/outputs/${outputFilename}`,
+                    thumbnail: `/outputs/${thumbnailFilename}`,
+                    prompt: prompt,
+                    creditsUsed: creditResult.cost,
+                    creditsRemaining: creditResult.credits
+                }
+            });
+            
+            res.end();
+            
+        } catch (error) {
+            console.error('Stream error:', error);
+            sendEvent({
+                status: 'error',
+                error: error.message || 'Failed to edit image'
+            });
+            res.end();
+        }
         
     } catch (error) {
         console.error('Error:', error);

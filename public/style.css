@@ -581,6 +581,23 @@ textarea::placeholder {
     margin-bottom: var(--spacing-md);
 }
 
+.param-group.full-width {
+    grid-column: 1 / -1;
+}
+
+.param-group label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.param-group input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
 /* 预设模板 */
 .prompt-templates {
     display: grid;

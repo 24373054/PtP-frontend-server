@@ -50,4 +50,17 @@ if pgrep -f "node server.js" > /dev/null; then
     exit 1
 fi
 
-node server.js
+nohup node server.js > server.log 2>&1 &
+sleep 2
+
+if pgrep -f "node server.js" > /dev/null; then
+    echo "✓ P2P 服务后台启动成功 (PID: $!)"
+    echo "  日志: /home/Matrix/yz/AI-movie/p2p-server/server.log"
+    echo "  停止: pkill -f 'node server.js'"
+else
+    echo "✗ P2P 服务启动失败，查看日志: server.log"
+    exit 1
+fi
+
+echo ""
+echo "=== 全部服务已后台运行 ==="

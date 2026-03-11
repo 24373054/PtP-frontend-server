@@ -39,6 +39,7 @@ const widthInput = document.getElementById('widthInput');
 const heightInput = document.getElementById('heightInput');
 const stepsInput = document.getElementById('stepsInput');
 const cfgInput = document.getElementById('cfgInput');
+const gridModeCheckbox = document.getElementById('gridModeCheckbox');
 const generateBtn = document.getElementById('generateBtn');
 
 // Common elements
@@ -85,7 +86,7 @@ function canSaveToAlbum() {
     );
 }
 
-// 显示加载进度
+// 显示加载进度（仅显示UI，不模拟进度）
 function showLoadingProgress() {
     // 显示结果区域
     resultSection.classList.remove('hidden');
@@ -103,27 +104,21 @@ function showLoadingProgress() {
     loadingOverlay.classList.remove('hidden');
     
     const progressNumber = document.querySelector('.progress-number');
-    let progress = 0;
     
     // 清除之前的定时器
     if (progressInterval) {
         clearInterval(progressInterval);
+        progressInterval = null;
     }
     
-    // 模拟进度：0-85%快速，85-97%慢速
-    progressInterval = setInterval(() => {
-        if (progress < 85) {
-            // 0-85%: 快速增长（每100ms增加3-8%）
-            progress += Math.random() * 5 + 3;
-            if (progress > 85) progress = 85;
-        } else if (progress < 97) {
-            // 85-97%: 慢速增长（每100ms增加0.3-0.8%）
-            progress += Math.random() * 0.5 + 0.3;
-            if (progress > 97) progress = 97;
-        }
-        
-        progressNumber.textContent = Math.floor(progress);
-    }, 100);
+    // 初始化进度为0
+    progressNumber.textContent = '0';
+}
+
+// 更新真实进度（由SSE事件调用）
+function updateRealProgress(progress) {
+    const progressNumber = document.querySelector('.progress-number');
+    progressNumber.textContent = Math.floor(progress);
 }
 
 // 隐藏加载进度
@@ -191,6 +186,7 @@ const i18n = {
         'generate.height': 'Height',
         'generate.steps': 'Steps',
         'generate.cfg': 'CFG',
+        'generate.gridMode': 'Grid Mode (4 GPU Parallel)',
         'generate.button': 'Generate Image',
         'generate.generating': 'Generating...',
         'result.title': 'Result',
@@ -246,6 +242,7 @@ const i18n = {
         'generate.height': '高度',
         'generate.steps': '步数',
         'generate.cfg': 'CFG',
+        'generate.gridMode': '四宫格模式 (4 GPU并行)',
         'generate.button': '生成图片',
         'generate.generating': '生成中...',
         'result.title': '结果',
@@ -670,7 +667,8 @@ editBtn.addEventListener('click', async () => {
     showLoadingProgress();
     
     try {
-        const response = await fetch('/api/edit', {
+        // 使用流式API
+        const response = await fetch('/api/edit-stream', {
             method: 'POST',
             body: formData
         });
@@ -686,28 +684,62 @@ editBtn.addEventListener('click', async () => {
             throw new Error(error.error || 'Failed to process image');
         }
         
-        const data = await response.json();
+        // 处理SSE流
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
         
-        // 更新积分余额
-        if (data.creditsRemaining !== undefined) {
-            creditsCount.textContent = data.creditsRemaining;
-            currentUser.credits = data.creditsRemaining;
+        while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // 保留不完整的行
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = JSON.parse(line.slice(6));
+                    
+                    // 更新进度
+                    if (data.progress !== undefined) {
+                        updateRealProgress(data.progress);
+                    }
+                    
+                    // 处理完成事件
+                    if (data.status === 'completed' && data.result) {
+                        const result = data.result;
+                        
+                        // 更新积分余额
+                        if (result.creditsRemaining !== undefined) {
+                            creditsCount.textContent = result.creditsRemaining;
+                            currentUser.credits = result.creditsRemaining;
+                        }
+                        
+                        // 优先显示缩略图
+                        resultImage.src = result.thumbnail || result.image;
+                        
+                        // 存储原图URL
+                        currentOriginalImage = result.image;
+                        
+                        // 隐藏加载进度
+                        hideLoadingProgress();
+                        
+                        // 更新下载按钮文本
+                        updateDownloadButtonText();
+                        
+                        // Scroll to result
+                        resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                    
+                    // 处理错误事件
+                    if (data.status === 'error') {
+                        throw new Error(data.error || 'Failed to process image');
+                    }
+                }
+            }
         }
-        
-        // 优先显示缩略图
-        resultImage.src = data.thumbnail || data.image;
-        
-        // 存储原图URL
-        currentOriginalImage = data.image;
-        
-        // 隐藏加载进度
-        hideLoadingProgress();
-        
-        // 更新下载按钮文本
-        updateDownloadButtonText();
-        
-        // Scroll to result
-        resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         
     } catch (error) {
         hideLoadingProgress();
@@ -821,6 +853,7 @@ generateBtn.addEventListener('click', async () => {
     const height = parseInt(heightInput.value);
     const steps = parseInt(stepsInput.value);
     const cfg = parseFloat(cfgInput.value);
+    const gridMode = gridModeCheckbox.checked;
     
     // Validate parameters
     if (width < 256 || width > 2048 || height < 256 || height > 2048) {
@@ -842,54 +875,142 @@ generateBtn.addEventListener('click', async () => {
     showLoadingProgress();
     
     try {
-        const response = await fetch('/api/generate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                prompt: prompt,
-                width: width,
-                height: height,
-                steps: steps,
-                cfg: cfg,
-                accessCode: currentAccessCode
-            })
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
+        // 四宫格模式使用原API（不支持流式）
+        if (gridMode) {
+            const response = await fetch('/api/generate-grid', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    prompt: prompt,
+                    width: width,
+                    height: height,
+                    steps: steps,
+                    cfg: cfg,
+                    accessCode: currentAccessCode
+                })
+            });
             
-            // 积分不足
-            if (response.status === 402) {
-                throw new Error(i18n[currentLang]['credits.insufficient']);
+            if (!response.ok) {
+                const error = await response.json();
+                
+                // 积分不足
+                if (response.status === 402) {
+                    throw new Error(i18n[currentLang]['credits.insufficient']);
+                }
+                
+                throw new Error(error.error || 'Failed to generate image');
             }
             
-            throw new Error(error.error || 'Failed to generate image');
+            const data = await response.json();
+            
+            // 更新积分余额
+            if (data.creditsRemaining !== undefined) {
+                creditsCount.textContent = data.creditsRemaining;
+                currentUser.credits = data.creditsRemaining;
+            }
+            
+            // 优先显示缩略图
+            resultImage.src = data.thumbnail || data.image;
+            
+            // 存储原图URL
+            currentOriginalImage = data.image;
+            
+            // 隐藏加载进度
+            hideLoadingProgress();
+            
+            // 更新下载按钮文本
+            updateDownloadButtonText();
+            
+            // Scroll to result
+            resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            
+        } else {
+            // 单张模式使用流式API
+            const response = await fetch('/api/generate-stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    prompt: prompt,
+                    width: width,
+                    height: height,
+                    steps: steps,
+                    cfg: cfg,
+                    accessCode: currentAccessCode
+                })
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                
+                // 积分不足
+                if (response.status === 402) {
+                    throw new Error(i18n[currentLang]['credits.insufficient']);
+                }
+                
+                throw new Error(error.error || 'Failed to generate image');
+            }
+            
+            // 处理SSE流
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            
+            while (true) {
+                const { done, value } = await reader.read();
+                
+                if (done) break;
+                
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // 保留不完整的行
+                
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = JSON.parse(line.slice(6));
+                        
+                        // 更新进度
+                        if (data.progress !== undefined) {
+                            updateRealProgress(data.progress);
+                        }
+                        
+                        // 处理完成事件
+                        if (data.status === 'completed' && data.result) {
+                            const result = data.result;
+                            
+                            // 更新积分余额
+                            if (result.creditsRemaining !== undefined) {
+                                creditsCount.textContent = result.creditsRemaining;
+                                currentUser.credits = result.creditsRemaining;
+                            }
+                            
+                            // 优先显示缩略图
+                            resultImage.src = result.thumbnail || result.image;
+                            
+                            // 存储原图URL
+                            currentOriginalImage = result.image;
+                            
+                            // 隐藏加载进度
+                            hideLoadingProgress();
+                            
+                            // 更新下载按钮文本
+                            updateDownloadButtonText();
+                            
+                            // Scroll to result
+                            resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }
+                        
+                        // 处理错误事件
+                        if (data.status === 'error') {
+                            throw new Error(data.error || 'Failed to generate image');
+                        }
+                    }
+                }
+            }
         }
-        
-        const data = await response.json();
-        
-        // 更新积分余额
-        if (data.creditsRemaining !== undefined) {
-            creditsCount.textContent = data.creditsRemaining;
-            currentUser.credits = data.creditsRemaining;
-        }
-        
-        // 优先显示缩略图
-        resultImage.src = data.thumbnail || data.image;
-        
-        // 存储原图URL
-        currentOriginalImage = data.image;
-        
-        // 隐藏加载进度
-        hideLoadingProgress();
-        
-        // 更新下载按钮文本
-        updateDownloadButtonText();
-        
-        // Scroll to result
-        resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         
     } catch (error) {
         hideLoadingProgress();

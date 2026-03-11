@@ -107,6 +107,51 @@ Response:
 }
 ```
 
+### POST /api/edit-stream (Real-time Streaming)
+Edit an image with real-time progress updates via Server-Sent Events (SSE).
+
+Request:
+- `image`: Image file (multipart/form-data)
+- `prompt`: Edit instructions (text)
+- `accessCode`: User access code (text)
+
+Response: Server-Sent Events stream
+
+Event format:
+```
+data: {"status": "initializing", "progress": 5, "message": "Uploading image..."}
+data: {"status": "preparing", "progress": 15, "message": "Preparing workflow..."}
+data: {"status": "queued", "progress": 20, "message": "Workflow submitted..."}
+data: {"status": "processing", "progress": 50, "message": "Generating..."}
+data: {"status": "downloading", "progress": 90, "message": "Downloading result..."}
+data: {"status": "processing", "progress": 95, "message": "Generating thumbnail..."}
+data: {"status": "completed", "progress": 100, "result": {...}}
+```
+
+Completed result format:
+```json
+{
+  "status": "completed",
+  "progress": 100,
+  "result": {
+    "success": true,
+    "image": "/outputs/xxx.png",
+    "thumbnail": "/outputs/thumb_xxx.jpg",
+    "prompt": "...",
+    "creditsUsed": 2,
+    "creditsRemaining": 98
+  }
+}
+```
+
+Error format:
+```json
+{
+  "status": "error",
+  "error": "Error message"
+}
+```
+
 ### GET /api/health
 Check server and ComfyUI status.
 
