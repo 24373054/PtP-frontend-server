@@ -333,7 +333,6 @@ const i18n = {
             'No long prompts needed — pick a category, upload, and go. Advanced options stay folded below.',
         'jewelry.pickCategory': 'Category',
         'jewelry.pickScene': 'Set & lighting',
-        'jewelry.optionalShort': 'Extra note (optional, one line)',
         'jewelry.advancedTitle': 'Export, exclusions & batch',
         'jewelry.demo.eyebrow': 'Guided preview',
         'jewelry.demo.title': 'What this mode is aiming for',
@@ -489,7 +488,6 @@ const i18n = {
         'jewelry.quickHint': '不用写长提示词，点选品类后上传即可；导出与批量收在下方折叠里。',
         'jewelry.pickCategory': '品类',
         'jewelry.pickScene': '布景光感',
-        'jewelry.optionalShort': '额外一句说明（可选）',
         'jewelry.advancedTitle': '导出、排除与批量',
         'jewelry.demo.eyebrow': '效果示意',
         'jewelry.demo.title': '这个模式在做什么',
@@ -648,9 +646,6 @@ function applyHomeTaskIntent(task) {
         }
     }
 
-    const optHint = document.getElementById('jewelryOptionalHint');
-    if (optHint && isJewelryIntent()) optHint.value = '';
-
     renderEditPresetChips();
     populateJewelryUi();
     updateEditModeBanner();
@@ -795,7 +790,6 @@ function updateJewelryFlowLayout() {
     const demo = document.getElementById('jewelryDemoStrip');
     const classic = document.getElementById('classicPromptBlock');
     const quick = document.getElementById('jewelryQuickStrip');
-    const optStrip = document.getElementById('jewelryOptionalStrip');
     const adv = document.getElementById('jewelryAdvancedPanel');
     const sceneRow = document.getElementById('jewelrySceneRow');
     const presetBar = document.getElementById('editPresetBar');
@@ -805,7 +799,6 @@ function updateJewelryFlowLayout() {
     if (demo) demo.classList.toggle('hidden', !j);
     if (classic) classic.classList.toggle('hidden', j);
     if (quick) quick.classList.toggle('hidden', !j);
-    if (optStrip) optStrip.classList.toggle('hidden', !j);
     if (adv) adv.classList.toggle('hidden', !j);
     if (sceneRow) sceneRow.classList.toggle('hidden', !j || editIntentTask !== 'jewelry_scene');
     if (presetBar) presetBar.classList.toggle('hidden', j);
@@ -909,12 +902,10 @@ function renderBatchFileList() {
 function hasValidEditPromptCore() {
     let body;
     if (isJewelryIntent()) {
-        const opt = (document.getElementById('jewelryOptionalHint')?.value || '').trim();
         const parts = [
             buildJewelryCategoryPrefix(),
             buildJewelryAutoBasePrompt(),
-            editIntentTask === 'jewelry_scene' ? jewelrySceneSnippet : '',
-            opt
+            editIntentTask === 'jewelry_scene' ? jewelrySceneSnippet : ''
         ].filter(Boolean);
         body = parts.join('\n').trim();
     } else {
@@ -939,12 +930,10 @@ function buildJewelryAutoBasePrompt() {
 function buildEditPromptForRequest() {
     let t;
     if (isJewelryIntent()) {
-        const opt = (document.getElementById('jewelryOptionalHint')?.value || '').trim();
         const parts = [
             buildJewelryCategoryPrefix(),
             buildJewelryAutoBasePrompt(),
-            editIntentTask === 'jewelry_scene' ? jewelrySceneSnippet : '',
-            opt
+            editIntentTask === 'jewelry_scene' ? jewelrySceneSnippet : ''
         ].filter(Boolean);
         t = parts.join('\n').trim();
     } else {
@@ -962,12 +951,10 @@ function buildEditPromptForRequest() {
 
 function summarizeEditPromptForDisplay() {
     if (isJewelryIntent()) {
-        const opt = (document.getElementById('jewelryOptionalHint')?.value || '').trim();
         const parts = [
             buildJewelryCategoryPrefix().replace(/\n$/, ''),
             buildJewelryAutoBasePrompt().slice(0, 120),
-            editIntentTask === 'jewelry_scene' ? jewelrySceneSnippet.slice(0, 120) : '',
-            opt
+            editIntentTask === 'jewelry_scene' ? jewelrySceneSnippet.slice(0, 120) : ''
         ].filter(Boolean);
         return parts.join(' · ').slice(0, 400);
     }
@@ -1677,8 +1664,6 @@ removeBtn.addEventListener('click', (e) => {
 // Prompt input
 promptInput.addEventListener('input', updateEditButton);
 if (negativePrompt) negativePrompt.addEventListener('input', updateEditButton);
-const jewelryOptionalHintEl = document.getElementById('jewelryOptionalHint');
-if (jewelryOptionalHintEl) jewelryOptionalHintEl.addEventListener('input', updateEditButton);
 const jewelryNegativePromptEl = document.getElementById('jewelryNegativePrompt');
 if (jewelryNegativePromptEl)
     jewelryNegativePromptEl.addEventListener('input', updateEditButton);
@@ -1809,7 +1794,7 @@ async function finalizeEditSuccess(finalResult) {
 
 // Edit image
 editBtn.addEventListener('click', async () => {
-    if (!selectedFile || !promptInput.value.trim()) return;
+    if (!selectedFile || !hasValidEditPromptCore()) return;
 
     editBtn.disabled = true;
     editBtn.querySelector('.btn-text').classList.add('hidden');
@@ -2227,8 +2212,6 @@ if (historyModalOpenEditor) {
                 : historyModalItem.taskType || 'style';
             if (isJewelryIntent()) {
                 promptInput.value = '';
-                const oh = document.getElementById('jewelryOptionalHint');
-                if (oh) oh.value = '';
             } else {
                 promptInput.value = historyModalItem.prompt || '';
             }
@@ -2295,7 +2278,7 @@ if (batchClearBtn) {
 }
 if (batchRunBtn) {
     batchRunBtn.addEventListener('click', async () => {
-        if (!batchQueue.length || !promptInput.value.trim()) return;
+        if (!batchQueue.length || !hasValidEditPromptCore()) return;
 
         editBtn.disabled = true;
         batchRunBtn.disabled = true;
