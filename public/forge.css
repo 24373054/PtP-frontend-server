@@ -573,3 +573,159 @@
         height: 68px;
     }
 }
+
+/* —— 珠宝商拍面板 —— */
+.home-card-jewelry {
+    border-color: rgba(180, 140, 90, 0.28);
+    background: linear-gradient(
+        145deg,
+        rgba(255, 252, 248, 0.92),
+        rgba(245, 238, 228, 0.55)
+    );
+}
+
+.jewelry-panel {
+    margin: 16px 0 8px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--glass-stroke-outer);
+    background: rgba(255, 255, 255, 0.45);
+    overflow: hidden;
+}
+
+.jewelry-panel summary {
+    cursor: pointer;
+    padding: 14px 16px;
+    font-weight: 600;
+    font-size: 15px;
+    list-style: none;
+}
+
+.jewelry-panel summary::-webkit-details-marker {
+    display: none;
+}
+
+.jewelry-panel-body {
+    padding: 0 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.jewelry-field label,
+.jewelry-label {
+    display: block;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    margin-bottom: 6px;
+}
+
+.jewelry-select {
+    width: 100%;
+    max-width: 420px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--glass-stroke-outer);
+    background: var(--color-surface-solid);
+    font-size: 14px;
+}
+
+.scene-pack-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.scene-pack-bar .scene-chip {
+    padding: 8px 12px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--glass-stroke-outer);
+    background: rgba(255, 255, 255, 0.65);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.scene-pack-bar .scene-chip:hover {
+    background: rgba(255, 255, 255, 0.95);
+}
+
+.jew-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: end;
+}
+
+@media (max-width: 640px) {
+    .jew-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+.jewelry-pad input[type='range'] {
+    width: 100%;
+    max-width: 280px;
+}
+
+.jew-watermark .jewelry-check-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.jewelry-wm-input {
+    width: 100%;
+    max-width: 360px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--glass-stroke-outer);
+    font-size: 14px;
+}
+
+.jewelry-batch {
+    padding-top: 8px;
+    border-top: 1px dashed rgba(0, 0, 0, 0.08);
+}
+
+.jew-batch-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.batch-file-list {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    max-height: 140px;
+    overflow-y: auto;
+}
+
+.batch-file-list li {
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.btn-secondary {
+    padding: 10px 16px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--glass-stroke-outer);
+    background: rgba(255, 255, 255, 0.55);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--color-text);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.88);
+}
+
+.btn-secondary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}

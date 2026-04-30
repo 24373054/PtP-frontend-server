@@ -467,7 +467,18 @@ const EDIT_TEMPLATE_ALIASES = {
     image_upscale: 'image_upscale',
     background: 'background_repaint',
     bg: 'background_repaint',
-    background_repaint: 'background_repaint'
+    background_repaint: 'background_repaint',
+    /** 珠宝 / 商拍垂直模板 */
+    jewelry_retouch: 'jewelry_retouch',
+    jewel_retouch: 'jewelry_retouch',
+    jewelry_cutout: 'jewelry_product_cutout',
+    jewelry_product_cutout: 'jewelry_product_cutout',
+    product_cutout: 'jewelry_product_cutout',
+    jewelry_scene: 'jewelry_scene',
+    jewel_scene: 'jewelry_scene',
+    jewelry_macro: 'jewelry_macro_detail',
+    jewelry_macro_detail: 'jewelry_macro_detail',
+    jewel_macro: 'jewelry_macro_detail'
 };
 
 /**
@@ -494,6 +505,34 @@ const EDIT_VARIANT_INPUT_PATCHES = {
         '75:62': { steps: 8 },
         '75:63': { cfg: 1.22 },
         '9': { filename_prefix: 'if-bg' }
+    },
+    /** 珠宝精修：略增步数与像素，偏 lanczos */
+    jewelry_retouch: {
+        '75:80': { upscale_method: 'lanczos', megapixels: 1.15 },
+        '75:62': { steps: 6 },
+        '75:63': { cfg: 1.06 },
+        '9': { filename_prefix: 'if-jw-retouch' }
+    },
+    /** 抠图 / 白底：高 CFG + 较高步数，强化边缘 */
+    jewelry_product_cutout: {
+        '75:80': { upscale_method: 'lanczos', megapixels: 1 },
+        '75:62': { steps: 10 },
+        '75:63': { cfg: 1.3 },
+        '9': { filename_prefix: 'if-jw-cutout' }
+    },
+    /** 场景合成 */
+    jewelry_scene: {
+        '75:80': { upscale_method: 'lanczos', megapixels: 1.25 },
+        '75:62': { steps: 9 },
+        '75:63': { cfg: 1.2 },
+        '9': { filename_prefix: 'if-jw-scene' }
+    },
+    /** 微距 / 细节放大 */
+    jewelry_macro_detail: {
+        '75:80': { upscale_method: 'lanczos', megapixels: 2.25 },
+        '75:62': { steps: 14 },
+        '75:63': { cfg: 1 },
+        '9': { filename_prefix: 'if-jw-macro' }
     }
 };
 
@@ -684,6 +723,99 @@ async function generateThumbnail(imagePath, thumbnailPath, maxWidth = 800) {
         console.error('Thumbnail generation failed:', error);
         return false;
     }
+}
+
+function escapeXmlForSvg(s) {
+    return String(s)
+        .slice(0, 120)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function clampPostNum(n, a, b) {
+    const x = Number(n);
+    if (Number.isNaN(x)) return a;
+    return Math.max(a, Math.min(b, x));
+}
+
+function parsePostProcessBody(raw) {
+    if (raw == null || raw === '') return null;
+    try {
+        const o = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return o && typeof o === 'object' ? o : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+/**
+ * 珠宝商拍导出：白边、平台尺寸 contain、可选水印。在写入 Comfy 输出后、缩略图前调用。
+ */
+async function applyOutputPostProcess(outputPath, opts) {
+    if (!opts) return;
+    const pad = clampPostNum(opts.paddingRatio, 0, 0.3);
+    const exp = opts.export;
+    const wm = opts.watermark;
+
+    let buf = await fs.promises.readFile(outputPath);
+
+    if (pad > 0) {
+        const meta = await sharp(buf).metadata();
+        const w = meta.width || 1;
+        const h = meta.height || 1;
+        const extra = Math.round(Math.max(w, h) * pad);
+        buf = await sharp(buf)
+            .extend({
+                top: extra,
+                bottom: extra,
+                left: extra,
+                right: extra,
+                background: { r: 255, g: 255, b: 255, alpha: 1 }
+            })
+            .png()
+            .toBuffer();
+    }
+
+    if (exp && Number(exp.width) > 0 && Number(exp.height) > 0) {
+        buf = await sharp(buf)
+            .resize(Math.round(exp.width), Math.round(exp.height), {
+                fit: 'contain',
+                background: { r: 255, g: 255, b: 255, alpha: 1 }
+            })
+            .png()
+            .toBuffer();
+    }
+
+    if (wm && String(wm.text || '').trim()) {
+        const opacity = clampPostNum(
+            wm.opacity != null ? wm.opacity : 0.35,
+            0.05,
+            1
+        );
+        const meta = await sharp(buf).metadata();
+        const tw = meta.width || 800;
+        const th = meta.height || 800;
+        const fontSize = Math.max(
+            12,
+            Math.round(Math.min(tw, th) * 0.028)
+        );
+        const text = escapeXmlForSvg(wm.text);
+        const svg = Buffer.from(
+            `<svg width="${tw}" height="${th}" xmlns="http://www.w3.org/2000/svg">
+        <text x="${tw - 16}" y="${th - 16}" font-family="sans-serif" font-size="${fontSize}"
+          fill="rgba(255,255,255,${opacity})" text-anchor="end" stroke="rgba(0,0,0,${opacity * 0.6})" stroke-width="2">${text}</text>
+      </svg>`,
+            'utf8'
+        );
+        buf = await sharp(buf)
+            .composite([{ input: svg, left: 0, top: 0 }])
+            .png()
+            .toBuffer();
+    }
+
+    await fs.promises.writeFile(outputPath, buf);
 }
 
 // 合成四宫格图片
@@ -1255,6 +1387,15 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
         const outputFilename = `${uuidv4()}.png`;
         const outputPath = path.join(OUTPUT_DIR, outputFilename);
         fs.writeFileSync(outputPath, imageResponse.data);
+
+        try {
+            await applyOutputPostProcess(
+                outputPath,
+                parsePostProcessBody(req.body.postProcess)
+            );
+        } catch (pe) {
+            console.error('[postProcess]', pe.message || pe);
+        }
         
         // 生成缩略图
         const thumbnailFilename = `thumb_${outputFilename.replace('.png', '.jpg')}`;
@@ -1353,6 +1494,15 @@ app.post('/api/edit-stream', upload.single('image'), async (req, res) => {
             const outputFilename = `${uuidv4()}.png`;
             const outputPath = path.join(OUTPUT_DIR, outputFilename);
             fs.writeFileSync(outputPath, imageResponse.data);
+
+            try {
+                await applyOutputPostProcess(
+                    outputPath,
+                    parsePostProcessBody(req.body.postProcess)
+                );
+            } catch (pe) {
+                console.error('[postProcess]', pe.message || pe);
+            }
             
             sendEvent({ status: 'processing', progress: 95, message: 'Generating thumbnail...' });
             

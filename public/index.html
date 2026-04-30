@@ -103,6 +103,22 @@
                     <span class="hc-title" data-i18n="home.card.bg.title">背景重绘</span>
                     <span class="hc-desc" data-i18n="home.card.bg.desc">ComfyUI：提高 CFG + 8 步，配合背景提示</span>
                 </button>
+                <button type="button" class="home-card home-card-jewelry" data-open="editor" data-task="jewelry_retouch">
+                    <span class="hc-title" data-i18n="home.card.jewelry.retouch.title">珠宝精修</span>
+                    <span class="hc-desc" data-i18n="home.card.jewelry.retouch.desc">金属高光与火彩 · 模板 jewelry_retouch</span>
+                </button>
+                <button type="button" class="home-card home-card-jewelry" data-open="editor" data-task="jewelry_cutout">
+                    <span class="hc-title" data-i18n="home.card.jewelry.cutout.title">抠图白底</span>
+                    <span class="hc-desc" data-i18n="home.card.jewelry.cutout.desc">干净边缘与商拍白底 · jewelry_product_cutout</span>
+                </button>
+                <button type="button" class="home-card home-card-jewelry" data-open="editor" data-task="jewelry_scene">
+                    <span class="hc-title" data-i18n="home.card.jewelry.scene.title">场景合成</span>
+                    <span class="hc-desc" data-i18n="home.card.jewelry.scene.desc">轻奢布景 · jewelry_scene</span>
+                </button>
+                <button type="button" class="home-card home-card-jewelry" data-open="editor" data-task="jewelry_macro">
+                    <span class="hc-title" data-i18n="home.card.jewelry.macro.title">微距细节</span>
+                    <span class="hc-desc" data-i18n="home.card.jewelry.macro.desc">商用放大 · jewelry_macro_detail</span>
+                </button>
                 <button type="button" class="home-card" data-open="history">
                     <span class="hc-title" data-i18n="home.card.history.title">历史记录</span>
                     <span class="hc-desc" data-i18n="home.card.history.desc">本机保存的成功任务，可离线回看</span>
@@ -164,6 +180,47 @@
                     </section>
 
                     <div class="edit-preset-bar" id="editPresetBar"></div>
+
+                    <details class="jewelry-panel" id="jewelryPanel">
+                        <summary><span data-i18n="jewelry.panelTitle">珠宝商拍</span></summary>
+                        <div class="jewelry-panel-body">
+                            <div class="jewelry-field">
+                                <label for="jewelryCategorySelect" data-i18n="jewelry.category">品类构图提示</label>
+                                <select id="jewelryCategorySelect" class="jewelry-select"></select>
+                            </div>
+                            <div class="jewelry-field">
+                                <span class="jewelry-label" data-i18n="jewelry.scenes">场景快捷句</span>
+                                <div class="scene-pack-bar" id="jewelrySceneBar"></div>
+                            </div>
+                            <div class="jewelry-field jew-row">
+                                <div>
+                                    <label for="jewelryExportSelect" data-i18n="jewelry.export">导出尺寸（白底 contain）</label>
+                                    <select id="jewelryExportSelect" class="jewelry-select"></select>
+                                </div>
+                                <div class="jewelry-pad">
+                                    <label for="jewelryPadRange"><span data-i18n="jewelry.padding">白边</span> <span id="jewelryPadValue">8</span>%</label>
+                                    <input type="range" id="jewelryPadRange" min="0" max="30" value="8">
+                                </div>
+                            </div>
+                            <div class="jewelry-field jew-row jew-watermark">
+                                <label class="jewelry-check-label">
+                                    <input type="checkbox" id="jewelryWmCheck">
+                                    <span data-i18n="jewelry.watermark">水印文字</span>
+                                </label>
+                                <input type="text" id="jewelryWmText" class="jewelry-wm-input" data-i18n-placeholder="jewelry.wmPlaceholder" placeholder="品牌缩写">
+                            </div>
+                            <div class="jewelry-batch">
+                                <span class="jewelry-label" data-i18n="jewelry.batchTitle">批量队列</span>
+                                <input type="file" id="batchFileInput" accept="image/*" multiple hidden>
+                                <div class="jew-batch-actions">
+                                    <button type="button" class="btn-secondary" id="batchPickBtn" data-i18n="jewelry.batchPick">选择多张</button>
+                                    <button type="button" class="btn-secondary" id="batchClearBtn" data-i18n="jewelry.batchClear">清空</button>
+                                    <button type="button" class="btn-primary" id="batchRunBtn" disabled data-i18n="jewelry.batchRun">顺序处理</button>
+                                </div>
+                                <ul class="batch-file-list" id="batchFileList"></ul>
+                            </div>
+                        </div>
+                    </details>
 
                     <section class="action-section">
                         <button class="btn-primary" id="editBtn" disabled>

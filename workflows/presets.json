@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "templates": [
     {
       "id": "img2img_style",
@@ -21,6 +21,192 @@
       "workflowFile": "background_repaint.json",
       "note": "POST workflowTemplate=background_repaint；提高 CFG + 中等 steps，配合背景向提示词。",
       "workflowTemplate": "background_repaint"
+    },
+    {
+      "id": "jewelry_retouch",
+      "name": { "en": "Jewelry polish", "zh": "珠宝精修" },
+      "workflowFile": "img2img_style.json",
+      "note": "workflowTemplate=jewelry_retouch；金属高光与宝石火彩，steps≈6、lanczos、1.15MP。",
+      "workflowTemplate": "jewelry_retouch"
+    },
+    {
+      "id": "jewelry_product_cutout",
+      "name": { "en": "Product cutout / white BG", "zh": "抠图白底" },
+      "workflowFile": "background_repaint.json",
+      "note": "workflowTemplate=jewelry_product_cutout；高 CFG + 10 步，利于干净边缘与白底。",
+      "workflowTemplate": "jewelry_product_cutout"
+    },
+    {
+      "id": "jewelry_scene",
+      "name": { "en": "Lifestyle scene", "zh": "场景合成" },
+      "workflowFile": "background_repaint.json",
+      "note": "workflowTemplate=jewelry_scene；轻奢布景向，略高 megapixels。",
+      "workflowTemplate": "jewelry_scene"
+    },
+    {
+      "id": "jewelry_macro_detail",
+      "name": { "en": "Macro / detail upscale", "zh": "微距细节" },
+      "workflowFile": "image_upscale.json",
+      "note": "workflowTemplate=jewelry_macro_detail；2.25MP、14 步，细节强化。",
+      "workflowTemplate": "jewelry_macro_detail"
+    }
+  ],
+  "jewelryWorkflows": [
+    {
+      "id": "jewelry_retouch",
+      "workflowTemplate": "jewelry_retouch",
+      "name": { "en": "Jewelry polish", "zh": "珠宝精修" },
+      "hint": { "en": "Metal highlights & gemstone fire; keep shape.", "zh": "强化金属高光与火彩，不改变轮廓。" }
+    },
+    {
+      "id": "jewelry_product_cutout",
+      "workflowTemplate": "jewelry_product_cutout",
+      "name": { "en": "Cutout / white background", "zh": "抠图白底" },
+      "hint": { "en": "Clean edges; pure or soft white backdrop.", "zh": "边缘干净，纯白或柔和白底。" }
+    },
+    {
+      "id": "jewelry_scene",
+      "workflowTemplate": "jewelry_scene",
+      "name": { "en": "Scene composite", "zh": "场景合成" },
+      "hint": { "en": "Luxury set dressing; subject unchanged.", "zh": "轻奢布景，主体不变形。" }
+    },
+    {
+      "id": "jewelry_macro_detail",
+      "workflowTemplate": "jewelry_macro_detail",
+      "name": { "en": "Macro detail", "zh": "微距细节" },
+      "hint": { "en": "Micro-engraving & facet clarity.", "zh": "刻面与微刻字更清晰。" }
+    }
+  ],
+  "jewelryScenePacks": [
+    {
+      "id": "velvet_navy",
+      "name": { "en": "Navy velvet", "zh": "深蓝绒布" },
+      "prompt": {
+        "en": "Place on deep navy velvet with soft studio light, subtle gradient, premium catalog look.",
+        "zh": "深蓝丝绒衬底，柔和棚拍光，轻微渐变，高级目录风。"
+      }
+    },
+    {
+      "id": "marble_gold",
+      "name": { "en": "Marble & gold", "zh": "大理石金边" },
+      "prompt": {
+        "en": "Elegant white marble surface with thin gold trim reflections, soft daylight window.",
+        "zh": "白色大理石台面与细金边反射感，柔和日光窗光。"
+      }
+    },
+    {
+      "id": "bokeh_rose",
+      "name": { "en": "Rose bokeh", "zh": "玫瑰散景" },
+      "prompt": {
+        "en": "Warm rose-gold bokeh background, shallow depth of field, jewelry hero framing.",
+        "zh": "暖玫瑰金散景背景，浅景深，珠宝主图构图。"
+      }
+    },
+    {
+      "id": "minimal_360",
+      "name": { "en": "Minimal 360 pad", "zh": "极简转盘" },
+      "prompt": {
+        "en": "Minimal gray seamless cyclorama, soft top light, e-commerce 360-style pad.",
+        "zh": "极简灰色无缝弧面，顶柔光，电商转盘台风格。"
+      }
+    },
+    {
+      "id": "jade_wood",
+      "name": { "en": "Wood + jade mood", "zh": "木座文玩" },
+      "prompt": {
+        "en": "Dark walnut display stand, soft side light, cultural luxury still life.",
+        "zh": "深色胡桃木座，侧柔光，文玩静物质感。"
+      }
+    }
+  ],
+  "jewelryProductCategories": [
+    {
+      "id": "ring",
+      "name": { "en": "Ring", "zh": "戒指" },
+      "promptHint": {
+        "en": "Top-down or 3/4 hero angle; band and stone centered; even reflections.",
+        "zh": "俯视或四分之三主图角；戒圈与主石居中，反射均匀。"
+      }
+    },
+    {
+      "id": "necklace",
+      "name": { "en": "Necklace", "zh": "项链" },
+      "promptHint": {
+        "en": "Gentle S-curve lay flat; clasp hidden; chain links readable.",
+        "zh": "柔和 S 形平铺；链节清晰，扣件尽量不抢眼。"
+      }
+    },
+    {
+      "id": "earring",
+      "name": { "en": "Earrings", "zh": "耳饰" },
+      "promptHint": {
+        "en": "Symmetric pair layout or single stud macro; ear post not distorted.",
+        "zh": "对称耳对或单颗耳钉微距；针脚不畸变。"
+      }
+    },
+    {
+      "id": "bracelet",
+      "name": { "en": "Bracelet / bangle", "zh": "手镯手链" },
+      "promptHint": {
+        "en": "Soft oval loop; inner shine visible; clasp area clean.",
+        "zh": "柔和椭圆环状；内壁高光可见，扣合区干净。"
+      }
+    },
+    {
+      "id": "jade",
+      "name": { "en": "Jade / stone", "zh": "玉石文玩" },
+      "promptHint": {
+        "en": "Subsurface glow, gentle translucency, no oversharpened veins.",
+        "zh": "体现温润通透感，纹理不过锐。"
+      }
+    },
+    {
+      "id": "watch",
+      "name": { "en": "Watch", "zh": "腕表" },
+      "promptHint": {
+        "en": "Dial legible; crystal reflections controlled; crown detail preserved.",
+        "zh": "表盘可读，表镜反光克制，表冠细节保留。"
+      }
+    },
+    {
+      "id": "generic",
+      "name": { "en": "General jewelry", "zh": "通用珠宝" },
+      "promptHint": {
+        "en": "Premium product photo; neutral composition bias.",
+        "zh": "通用高级商拍构图。"
+      }
+    }
+  ],
+  "exportPresets": [
+    {
+      "id": "square_800",
+      "name": { "en": "Square 800 (main)", "zh": "主图 800×800" },
+      "width": 800,
+      "height": 800
+    },
+    {
+      "id": "square_1000",
+      "name": { "en": "Square 1000", "zh": "主图 1000×1000" },
+      "width": 1000,
+      "height": 1000
+    },
+    {
+      "id": "taobao_detail",
+      "name": { "en": "Detail 750×1000", "zh": "详情竖图 750×1000" },
+      "width": 750,
+      "height": 1000
+    },
+    {
+      "id": "douyin_1080",
+      "name": { "en": "Short video 1080²", "zh": "短视频封面 1080×1080" },
+      "width": 1080,
+      "height": 1080
+    },
+    {
+      "id": "xiaohongshu_3x4",
+      "name": { "en": "XHS 3:4", "zh": "小红书 1242×1660" },
+      "width": 1242,
+      "height": 1660
     }
   ],
   "editPresets": {
@@ -57,6 +243,34 @@
       "prompt": {
         "en": "Replace or repaint ONLY the background; keep the foreground subject pixel-accurate with clean edges; seamless blend.",
         "zh": "仅替换或重绘背景，前景主体边缘干净、与背景自然融合，不改变主体形状。"
+      }
+    },
+    "jewelry_metal_fire": {
+      "name": { "en": "Metal & fire polish", "zh": "金属火彩" },
+      "prompt": {
+        "en": "Polish precious metal reflections and gemstone fire; micro-contrast on facets; no geometry change.",
+        "zh": "强化贵金属反光与宝石火彩，刻面微对比，不改变几何外形。"
+      }
+    },
+    "jewelry_white_pure": {
+      "name": { "en": "Pure white catalog", "zh": "纯白目录" },
+      "prompt": {
+        "en": "Isolate product on pure white #FFFFFF seamless background; crisp edge; soft contact shadow only.",
+        "zh": "纯白无缝背景商品隔离；边缘利落，仅保留极轻接触阴影。"
+      }
+    },
+    "jewelry_gem_sparkle": {
+      "name": { "en": "Gem sparkle restrained", "zh": "宝石闪光克制" },
+      "prompt": {
+        "en": "Enhance sparkle without blown highlights; natural CA control; keep stone color accurate.",
+        "zh": "增强闪光但不过曝；色散自然；宝石颜色准确。"
+      }
+    },
+    "jewelry_antique_patina": {
+      "name": { "en": "Antique patina safe", "zh": "做旧安全" },
+      "prompt": {
+        "en": "For vintage pieces: respect patina; clean dust only; do not fake new plating.",
+        "zh": "古着感：保留自然包浆，仅去浮尘，不伪造新镀层。"
       }
     }
   }

@@ -117,12 +117,18 @@ let activeAbortController = null;
 let compareBeforeDataUrl = null;
 let lastResultSummary = {};
 let forgeUserCancelled = false;
+/** 批量队列（顺序调用 /api/edit-stream） */
+let batchQueue = [];
 
 /** 与 server.js normalizeEditTemplate 对齐 */
 const EDIT_WORKFLOW_TEMPLATE = {
     style: 'img2img_style',
     upscale: 'image_upscale',
-    background: 'background_repaint'
+    background: 'background_repaint',
+    jewelry_retouch: 'jewelry_retouch',
+    jewelry_cutout: 'jewelry_product_cutout',
+    jewelry_scene: 'jewelry_scene',
+    jewelry_macro: 'jewelry_macro_detail'
 };
 
 // 自定义弹窗函数
@@ -282,6 +288,25 @@ const i18n = {
         'home.card.history.desc': 'Saved in this browser; replay without GPU',
         'home.card.settings.title': 'Settings',
         'home.card.settings.desc': 'Health & version',
+        'home.card.jewelry.retouch.title': 'Jewelry polish',
+        'home.card.jewelry.retouch.desc': 'Metal & gemstone polish · jewelry_retouch',
+        'home.card.jewelry.cutout.title': 'Cutout / white BG',
+        'home.card.jewelry.cutout.desc': 'Clean edges · jewelry_product_cutout',
+        'home.card.jewelry.scene.title': 'Lifestyle scene',
+        'home.card.jewelry.scene.desc': 'Luxury set · jewelry_scene',
+        'home.card.jewelry.macro.title': 'Macro detail',
+        'home.card.jewelry.macro.desc': 'Commercial upscale · jewelry_macro_detail',
+        'jewelry.panelTitle': 'Jewelry & product photo',
+        'jewelry.category': 'Category framing hint',
+        'jewelry.scenes': 'Scene snippets',
+        'jewelry.export': 'Export size (white contain)',
+        'jewelry.padding': 'White margin',
+        'jewelry.watermark': 'Watermark text',
+        'jewelry.wmPlaceholder': 'Brand initials',
+        'jewelry.batchTitle': 'Batch queue',
+        'jewelry.batchPick': 'Pick multiple',
+        'jewelry.batchClear': 'Clear',
+        'jewelry.batchRun': 'Process in order',
         'edit.samples': 'Sample images',
         'edit.sampleWarm': 'Warm gradient',
         'edit.sampleCool': 'Cool gradient',
@@ -317,6 +342,14 @@ const i18n = {
             '当前：高清增强 · lanczos + ~2.25MP、12 步（更慢、更吃显存）· 提交模板 image_upscale',
         'editor.mode.background':
             '当前：背景重绘 · CFG 1.22、8 步 · 提交模板 background_repaint（请配合背景类描述）',
+        'editor.mode.jewelry_retouch':
+            'Mode: Jewelry polish · lanczos ~1.15MP, 6 steps, CFG 1.06 · template jewelry_retouch',
+        'editor.mode.jewelry_cutout':
+            'Mode: Cutout / white BG · 10 steps, CFG 1.30 · template jewelry_product_cutout',
+        'editor.mode.jewelry_scene':
+            'Mode: Lifestyle scene · ~1.25MP, 9 steps, CFG 1.20 · template jewelry_scene',
+        'editor.mode.jewelry_macro':
+            'Mode: Macro detail · ~2.25MP, 14 steps · template jewelry_macro_detail',
         'footer.terms': 'Terms of Service',
         'footer.privacy': 'Privacy Policy',
         'footer.icp':
@@ -394,6 +427,25 @@ const i18n = {
         'home.card.history.desc': '本机保存的成功任务，无 GPU 也可回看',
         'home.card.settings.title': '服务设置',
         'home.card.settings.desc': '健康检查与版本',
+        'home.card.jewelry.retouch.title': '珠宝精修',
+        'home.card.jewelry.retouch.desc': '金属与火彩 · jewelry_retouch',
+        'home.card.jewelry.cutout.title': '抠图白底',
+        'home.card.jewelry.cutout.desc': '干净边缘 · jewelry_product_cutout',
+        'home.card.jewelry.scene.title': '场景合成',
+        'home.card.jewelry.scene.desc': '轻奢布景 · jewelry_scene',
+        'home.card.jewelry.macro.title': '微距细节',
+        'home.card.jewelry.macro.desc': '商用放大 · jewelry_macro_detail',
+        'jewelry.panelTitle': '珠宝商拍选项',
+        'jewelry.category': '品类构图提示（写入提示词前缀）',
+        'jewelry.scenes': '场景快捷句',
+        'jewelry.export': '导出尺寸（白底 contain）',
+        'jewelry.padding': '白边留白',
+        'jewelry.watermark': '水印文字',
+        'jewelry.wmPlaceholder': '品牌缩写',
+        'jewelry.batchTitle': '批量队列',
+        'jewelry.batchPick': '选择多张',
+        'jewelry.batchClear': '清空',
+        'jewelry.batchRun': '顺序处理',
         'edit.samples': '样例图',
         'edit.sampleWarm': '暖色渐变',
         'edit.sampleCool': '冷色渐变',
@@ -429,6 +481,14 @@ const i18n = {
             '当前：高清增强 · lanczos + 约 2.25MP、12 步（更慢、更吃显存）· 提交模板 image_upscale',
         'editor.mode.background':
             '当前：背景重绘 · CFG 1.22、8 步 · 提交模板 background_repaint（请配合背景类描述）',
+        'editor.mode.jewelry_retouch':
+            '当前：珠宝精修 · lanczos ~1.15MP、6 步、CFG 1.06 · 模板 jewelry_retouch',
+        'editor.mode.jewelry_cutout':
+            '当前：抠图白底 · 10 步、CFG 1.30 · 模板 jewelry_product_cutout',
+        'editor.mode.jewelry_scene':
+            '当前：场景合成 · ~1.25MP、9 步、CFG 1.20 · 模板 jewelry_scene',
+        'editor.mode.jewelry_macro':
+            '当前：微距细节 · ~2.25MP、14 步 · 模板 jewelry_macro_detail',
         'footer.terms': '服务条款',
         'footer.privacy': '隐私政策',
         'footer.icp':
@@ -490,18 +550,16 @@ function showForgePage(page) {
 function updateEditModeBanner() {
     const el = document.getElementById('editModeBanner');
     if (!el) return;
-    const mode =
-        editIntentTask === 'upscale'
-            ? 'upscale'
-            : editIntentTask === 'background'
-              ? 'background'
-              : 'style';
-    const key =
-        mode === 'upscale'
-            ? 'editor.mode.upscale'
-            : mode === 'background'
-              ? 'editor.mode.background'
-              : 'editor.mode.style';
+    const keyMap = {
+        upscale: 'editor.mode.upscale',
+        background: 'editor.mode.background',
+        style: 'editor.mode.style',
+        jewelry_retouch: 'editor.mode.jewelry_retouch',
+        jewelry_cutout: 'editor.mode.jewelry_cutout',
+        jewelry_scene: 'editor.mode.jewelry_scene',
+        jewelry_macro: 'editor.mode.jewelry_macro'
+    };
+    const key = keyMap[editIntentTask] || 'editor.mode.style';
     el.textContent = i18n[currentLang][key] || '';
 }
 
@@ -515,16 +573,171 @@ function applyHomeTaskIntent(task) {
             extra = ep.upscale_main.prompt[langKey] || '';
         else if (task === 'background' && ep.background_main)
             extra = ep.background_main.prompt[langKey] || '';
+        else if (task === 'jewelry_cutout' && ep.jewelry_white_pure)
+            extra = ep.jewelry_white_pure.prompt[langKey] || '';
+        else if (task === 'jewelry_scene' && ep.background_main)
+            extra = ep.background_main.prompt[langKey] || '';
+        else if (task === 'jewelry_macro' && ep.upscale_main)
+            extra = ep.upscale_main.prompt[langKey] || '';
+        else if (task === 'jewelry_retouch' && ep.jewelry_metal_fire)
+            extra = ep.jewelry_metal_fire.prompt[langKey] || '';
         if (extra) {
             const cur = promptInput.value.trim();
             promptInput.value = cur ? `${cur}\n${extra}` : extra;
         }
     }
+    renderEditPresetChips();
+    populateJewelryUi();
     updateEditModeBanner();
+    renderBatchFileList();
+}
+
+function buildJewelryCategoryPrefix() {
+    if (
+        !['jewelry_retouch', 'jewelry_cutout', 'jewelry_scene', 'jewelry_macro'].includes(
+            editIntentTask
+        )
+    ) {
+        return '';
+    }
+    const sel = document.getElementById('jewelryCategorySelect');
+    if (!sel || !forgePresets || !forgePresets.jewelryProductCategories) return '';
+    const cat = forgePresets.jewelryProductCategories.find((c) => c.id === sel.value);
+    if (!cat || !cat.promptHint) return '';
+    const langKey = currentLang === 'zh' ? 'zh' : 'en';
+    const hint = cat.promptHint[langKey] || cat.promptHint.en;
+    const name = cat.name[langKey] || cat.name.en;
+    if (!hint) return '';
+    return currentLang === 'zh' ? `【${name}】${hint}\n` : `[${name}] ${hint}\n`;
+}
+
+function buildPostProcessPayload() {
+    const out = {};
+    const padEl = document.getElementById('jewelryPadRange');
+    if (padEl && Number(padEl.value) > 0) {
+        out.paddingRatio = Number(padEl.value) / 100;
+    }
+    const expSel = document.getElementById('jewelryExportSelect');
+    if (expSel && expSel.value && forgePresets && forgePresets.exportPresets) {
+        const preset = forgePresets.exportPresets.find((x) => x.id === expSel.value);
+        if (preset && preset.width && preset.height) {
+            out.export = { width: preset.width, height: preset.height };
+        }
+    }
+    const wmChk = document.getElementById('jewelryWmCheck');
+    const wmTxt = document.getElementById('jewelryWmText');
+    if (wmChk && wmChk.checked && wmTxt && wmTxt.value.trim()) {
+        out.watermark = { text: wmTxt.value.trim(), opacity: 0.38 };
+    }
+    return Object.keys(out).length ? out : null;
+}
+
+function fileToDataUrl(file) {
+    return new Promise((resolve) => {
+        if (!file) return resolve(null);
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = () => resolve(null);
+        r.readAsDataURL(file);
+    });
+}
+
+function getEditPresetChipKeys() {
+    const t = editIntentTask;
+    if (t === 'jewelry_retouch') {
+        return ['jewelry_metal_fire', 'jewelry_gem_sparkle', 'jewelry_antique_patina'];
+    }
+    if (t === 'jewelry_cutout') {
+        return ['jewelry_white_pure', 'background_main'];
+    }
+    if (t === 'jewelry_scene') {
+        return ['background_main', 'jewelry_metal_fire'];
+    }
+    if (t === 'jewelry_macro') {
+        return ['upscale_main', 'jewelry_gem_sparkle'];
+    }
+    return ['style_portrait', 'style_vintage', 'style_id'];
+}
+
+function populateJewelryUi() {
+    if (!forgePresets) return;
+    const lang = currentLang === 'zh' ? 'zh' : 'en';
+    const catSel = document.getElementById('jewelryCategorySelect');
+    if (catSel && forgePresets.jewelryProductCategories) {
+        const prev = catSel.value;
+        catSel.innerHTML = '';
+        forgePresets.jewelryProductCategories.forEach((c) => {
+            const o = document.createElement('option');
+            o.value = c.id;
+            o.textContent = c.name[lang] || c.name.en;
+            catSel.appendChild(o);
+        });
+        if (prev && [...catSel.options].some((opt) => opt.value === prev)) {
+            catSel.value = prev;
+        }
+    }
+    const expSel = document.getElementById('jewelryExportSelect');
+    if (expSel && forgePresets.exportPresets) {
+        const prev = expSel.value;
+        expSel.innerHTML = '';
+        const o0 = document.createElement('option');
+        o0.value = '';
+        o0.textContent =
+            currentLang === 'zh' ? '不缩放（仅 Comfy 输出）' : 'No resize (Comfy output only)';
+        expSel.appendChild(o0);
+        forgePresets.exportPresets.forEach((p) => {
+            const o = document.createElement('option');
+            o.value = p.id;
+            o.textContent = `${p.name[lang] || p.name.en} (${p.width}×${p.height})`;
+            expSel.appendChild(o);
+        });
+        if (prev) expSel.value = prev;
+    }
+    renderJewelrySceneChips();
+}
+
+function renderJewelrySceneChips() {
+    const bar = document.getElementById('jewelrySceneBar');
+    if (!bar || !forgePresets || !forgePresets.jewelryScenePacks) return;
+    bar.innerHTML = '';
+    const lang = currentLang === 'zh' ? 'zh' : 'en';
+    forgePresets.jewelryScenePacks.forEach((pack) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'scene-chip';
+        btn.textContent = pack.name[lang] || pack.name.en;
+        btn.addEventListener('click', () => {
+            const p = pack.prompt[lang] || pack.prompt.en;
+            const cur = promptInput.value.trim();
+            promptInput.value = cur ? `${cur}\n${p}` : p;
+            updateEditButton();
+            renderBatchFileList();
+        });
+        bar.appendChild(btn);
+    });
+}
+
+function renderBatchFileList() {
+    const ul = document.getElementById('batchFileList');
+    const runBtn = document.getElementById('batchRunBtn');
+    if (!ul) return;
+    ul.innerHTML = '';
+    batchQueue.forEach((f, i) => {
+        const li = document.createElement('li');
+        li.textContent = `${i + 1}. ${f.name}`;
+        ul.appendChild(li);
+    });
+    if (runBtn) {
+        runBtn.disabled =
+            batchQueue.length === 0 ||
+            !promptInput.value.trim() ||
+            !currentAccessCode;
+    }
 }
 
 function buildEditPromptForRequest() {
-    let t = promptInput.value.trim();
+    let t = buildJewelryCategoryPrefix() + promptInput.value.trim();
+    t = t.trim();
     const neg = negativePrompt && negativePrompt.value ? negativePrompt.value.trim() : '';
     if (neg) {
         t +=
@@ -643,6 +856,7 @@ async function loadForgePresets() {
         forgePresets = null;
     }
     renderEditPresetChips();
+    populateJewelryUi();
 }
 
 function renderEditPresetChips() {
@@ -650,7 +864,7 @@ function renderEditPresetChips() {
     editPresetBar.innerHTML = '';
     if (!forgePresets || !forgePresets.editPresets) return;
     const langKey = currentLang === 'zh' ? 'zh' : 'en';
-    const keys = ['style_portrait', 'style_vintage', 'style_id'];
+    const keys = getEditPresetChipKeys();
     keys.forEach((key) => {
         const def = forgePresets.editPresets[key];
         if (!def) return;
@@ -663,6 +877,7 @@ function renderEditPresetChips() {
             const cur = promptInput.value.trim();
             promptInput.value = cur ? `${cur}\n${p}` : p;
             updateEditButton();
+            renderBatchFileList();
         });
         editPresetBar.appendChild(btn);
     });
@@ -866,6 +1081,7 @@ function switchLanguage(lang) {
         updateUserInfo();
     }
     renderEditPresetChips();
+    populateJewelryUi();
     if (typeof editMode !== 'undefined' && editMode.classList.contains('active')) {
         updateEditModeBanner();
     }
@@ -1225,22 +1441,126 @@ function updateEditButton() {
     const hasFile = selectedFile !== null;
     const hasPrompt = promptInput.value.trim() !== '';
     editBtn.disabled = !(hasFile && hasPrompt);
+    renderBatchFileList();
 }
 
-// Edit image
-editBtn.addEventListener('click', async () => {
-    if (!selectedFile || !promptInput.value.trim()) return;
-
+/**
+ * 单次编辑 SSE（供主按钮与批量队列复用）。依赖外部已设置 activeAbortController。
+ * @param {File} uploadFile
+ */
+async function runEditStreamForFile(uploadFile) {
     const formData = new FormData();
-    formData.append('image', selectedFile);
+    formData.append('image', uploadFile);
     formData.append('prompt', buildEditPromptForRequest());
     formData.append('accessCode', currentAccessCode);
     formData.append(
         'workflowTemplate',
         EDIT_WORKFLOW_TEMPLATE[editIntentTask] || 'img2img_style'
     );
+    const pp = buildPostProcessPayload();
+    if (pp) formData.append('postProcess', JSON.stringify(pp));
 
-    compareBeforeDataUrl = previewImage.src || null;
+    if (uploadFile === selectedFile && previewImage && previewImage.src) {
+        compareBeforeDataUrl = previewImage.src;
+    } else {
+        compareBeforeDataUrl = await fileToDataUrl(uploadFile);
+    }
+
+    const response = await fetch(apiUrl('/api/edit-stream'), {
+        method: 'POST',
+        body: formData,
+        signal: activeAbortController.signal
+    });
+
+    if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        if (response.status === 402) {
+            throw new Error(i18n[currentLang]['credits.insufficient']);
+        }
+        throw new Error(errBody.error || 'Failed to process image');
+    }
+
+    let finalResult = null;
+    await consumeSseStream(
+        response,
+        async (data) => {
+            if (data.progress !== undefined) updateRealProgress(data.progress);
+            if (data.status === 'completed' && data.result) {
+                finalResult = data.result;
+                if (data.result.creditsRemaining !== undefined && creditsCount) {
+                    creditsCount.textContent = data.result.creditsRemaining;
+                    currentUser.credits = data.result.creditsRemaining;
+                }
+            }
+            if (data.status === 'error') {
+                throw new Error(data.error || 'Failed to process image');
+            }
+        },
+        activeAbortController.signal
+    );
+
+    if (!finalResult) throw new Error('No result');
+    return finalResult;
+}
+
+async function finalizeEditSuccess(finalResult) {
+    resultImage.src = finalResult.thumbnail || finalResult.image;
+    currentOriginalImage = finalResult.image;
+
+    const postSnap = buildPostProcessPayload();
+    lastResultSummary = {
+        mode: 'edit',
+        taskType: editIntentTask,
+        prompt: buildEditPromptForRequest(),
+        neg: negativePrompt ? negativePrompt.value.trim() : ''
+    };
+    setResultMeta([
+        `${currentLang === 'zh' ? '模式' : 'Mode'}: edit · ${editIntentTask}`,
+        `workflowTemplate: ${EDIT_WORKFLOW_TEMPLATE[editIntentTask] || 'img2img_style'}`,
+        postSnap
+            ? `${currentLang === 'zh' ? '后处理' : 'Post'}: ${JSON.stringify(postSnap)}`
+            : '',
+        `${currentLang === 'zh' ? '提示' : 'Prompt'}: ${promptInput.value.trim().slice(0, 400)}${
+            promptInput.value.trim().length > 400 ? '…' : ''
+        }`
+    ]);
+    setCompareAfterEdit(
+        compareBeforeDataUrl,
+        finalResult.thumbnail || finalResult.image,
+        finalResult.image
+    );
+
+    hideLoadingProgress();
+    updateDownloadButtonText();
+    resultSection.classList.remove('hidden');
+    showForgePage('editor');
+    resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    const inThumb = await shrinkDataUrl(compareBeforeDataUrl);
+    await registerHistoryEntry({
+        id: crypto.randomUUID(),
+        at: new Date().toISOString(),
+        mode: 'edit',
+        taskType: editIntentTask,
+        prompt: promptInput.value.trim(),
+        params: {
+            negative: lastResultSummary.neg || '',
+            workflowTemplate:
+                EDIT_WORKFLOW_TEMPLATE[editIntentTask] || 'img2img_style',
+            postProcess: postSnap,
+            promptSent: buildEditPromptForRequest()
+        },
+        outRel: finalResult.image,
+        thumbRel: finalResult.thumbnail || finalResult.image,
+        inThumbDataUrl: inThumb,
+        status: 'done',
+        err: null
+    });
+}
+
+// Edit image
+editBtn.addEventListener('click', async () => {
+    if (!selectedFile || !promptInput.value.trim()) return;
 
     editBtn.disabled = true;
     editBtn.querySelector('.btn-text').classList.add('hidden');
@@ -1256,93 +1576,17 @@ editBtn.addEventListener('click', async () => {
     }, TASK_CLIENT_TIMEOUT_MS);
 
     try {
-        const response = await fetch(apiUrl('/api/edit-stream'), {
-            method: 'POST',
-            body: formData,
-            signal: activeAbortController.signal
-        });
-
-        if (!response.ok) {
-            const errBody = await response.json().catch(() => ({}));
-            if (response.status === 402) {
-                throw new Error(i18n[currentLang]['credits.insufficient']);
-            }
-            throw new Error(errBody.error || 'Failed to process image');
-        }
-
-        let finalResult = null;
-        await consumeSseStream(
-            response,
-            async (data) => {
-                if (data.progress !== undefined) updateRealProgress(data.progress);
-                if (data.status === 'completed' && data.result) {
-                    finalResult = data.result;
-                    if (data.result.creditsRemaining !== undefined && creditsCount) {
-                        creditsCount.textContent = data.result.creditsRemaining;
-                        currentUser.credits = data.result.creditsRemaining;
-                    }
-                }
-                if (data.status === 'error') {
-                    throw new Error(data.error || 'Failed to process image');
-                }
-            },
-            activeAbortController.signal
-        );
-
-        if (!finalResult) throw new Error('No result');
-
-        resultImage.src = finalResult.thumbnail || finalResult.image;
-        currentOriginalImage = finalResult.image;
-
-        lastResultSummary = {
-            mode: 'edit',
-            taskType: editIntentTask,
-            prompt: buildEditPromptForRequest(),
-            neg: negativePrompt ? negativePrompt.value.trim() : ''
-        };
-        setResultMeta([
-            `${currentLang === 'zh' ? '模式' : 'Mode'}: edit · ${editIntentTask}`,
-            `workflowTemplate: ${EDIT_WORKFLOW_TEMPLATE[editIntentTask] || 'img2img_style'}`,
-            `${currentLang === 'zh' ? '提示' : 'Prompt'}: ${promptInput.value.trim().slice(0, 400)}${
-                promptInput.value.trim().length > 400 ? '…' : ''
-            }`
-        ]);
-        setCompareAfterEdit(
-            compareBeforeDataUrl,
-            finalResult.thumbnail || finalResult.image,
-            finalResult.image
-        );
-
-        hideLoadingProgress();
-        updateDownloadButtonText();
-        resultSection.classList.remove('hidden');
-        showForgePage('editor');
-        resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-        const inThumb = await shrinkDataUrl(compareBeforeDataUrl);
-        await registerHistoryEntry({
-            id: crypto.randomUUID(),
-            at: new Date().toISOString(),
-            mode: 'edit',
-            taskType: editIntentTask,
-            prompt: promptInput.value.trim(),
-            params: {
-                negative: lastResultSummary.neg || '',
-                workflowTemplate:
-                    EDIT_WORKFLOW_TEMPLATE[editIntentTask] || 'img2img_style'
-            },
-            outRel: finalResult.image,
-            thumbRel: finalResult.thumbnail || finalResult.image,
-            inThumbDataUrl: inThumb,
-            status: 'done',
-            err: null
-        });
+        const finalResult = await runEditStreamForFile(selectedFile);
+        await finalizeEditSuccess(finalResult);
     } catch (error) {
         hideLoadingProgress();
         resultSection.classList.add('hidden');
         if (forgeUserCancelled) {
             showAlert(i18n[currentLang]['task.cancelled']);
-        } else if (error.name === 'AbortError' || (error.message && error.message.includes('aborted'))) {
+        } else if (
+            error.name === 'AbortError' ||
+            (error.message && error.message.includes('aborted'))
+        ) {
             showAlert(i18n[currentLang]['task.timeout']);
         } else {
             showAlert(`Error: ${error.message}`);
@@ -1720,12 +1964,19 @@ if (historyModalOpenEditor) {
             const wtRev = {
                 img2img_style: 'style',
                 image_upscale: 'upscale',
-                background_repaint: 'background'
+                background_repaint: 'background',
+                jewelry_retouch: 'jewelry_retouch',
+                jewelry_product_cutout: 'jewelry_cutout',
+                jewelry_scene: 'jewelry_scene',
+                jewelry_macro_detail: 'jewelry_macro'
             };
             const wt = historyModalItem.params && historyModalItem.params.workflowTemplate;
             editIntentTask = wt
                 ? wtRev[wt] || historyModalItem.taskType || 'style'
                 : historyModalItem.taskType || 'style';
+            renderEditPresetChips();
+            populateJewelryUi();
+            updateEditModeBanner();
             updateEditButton();
         }
         closeHistoryModal();
@@ -1746,6 +1997,91 @@ if (btnClearHistory) {
         if (!ok) return;
         localStorage.removeItem(HISTORY_STORAGE_KEY);
         renderHistoryList();
+    });
+}
+
+const jewelryPadRange = document.getElementById('jewelryPadRange');
+const jewelryPadValue = document.getElementById('jewelryPadValue');
+if (jewelryPadRange && jewelryPadValue) {
+    jewelryPadRange.addEventListener('input', () => {
+        jewelryPadValue.textContent = jewelryPadRange.value;
+    });
+}
+
+const batchFileInput = document.getElementById('batchFileInput');
+const batchPickBtn = document.getElementById('batchPickBtn');
+const batchClearBtn = document.getElementById('batchClearBtn');
+const batchRunBtn = document.getElementById('batchRunBtn');
+
+if (batchPickBtn && batchFileInput) {
+    batchPickBtn.addEventListener('click', () => batchFileInput.click());
+}
+if (batchFileInput) {
+    batchFileInput.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files || []).filter((f) =>
+            f.type.startsWith('image/')
+        );
+        for (const f of files) {
+            if (f.size <= 20 * 1024 * 1024) batchQueue.push(f);
+        }
+        e.target.value = '';
+        renderBatchFileList();
+    });
+}
+if (batchClearBtn) {
+    batchClearBtn.addEventListener('click', () => {
+        batchQueue = [];
+        renderBatchFileList();
+    });
+}
+if (batchRunBtn) {
+    batchRunBtn.addEventListener('click', async () => {
+        if (!batchQueue.length || !promptInput.value.trim()) return;
+
+        editBtn.disabled = true;
+        batchRunBtn.disabled = true;
+        editBtn.querySelector('.btn-text').classList.add('hidden');
+        editBtn.querySelector('.btn-loading').classList.remove('hidden');
+
+        showLoadingProgress();
+        activeAbortController = new AbortController();
+        const tm = setTimeout(() => {
+            try {
+                activeAbortController.abort();
+            } catch (_) {}
+        }, TASK_CLIENT_TIMEOUT_MS);
+
+        try {
+            const q = batchQueue.slice();
+            for (let i = 0; i < q.length; i++) {
+                showLoadingProgress();
+                const finalResult = await runEditStreamForFile(q[i]);
+                await finalizeEditSuccess(finalResult);
+            }
+            batchQueue = [];
+            renderBatchFileList();
+        } catch (error) {
+            hideLoadingProgress();
+            resultSection.classList.add('hidden');
+            if (forgeUserCancelled) {
+                showAlert(i18n[currentLang]['task.cancelled']);
+            } else if (
+                error.name === 'AbortError' ||
+                (error.message && error.message.includes('aborted'))
+            ) {
+                showAlert(i18n[currentLang]['task.timeout']);
+            } else {
+                showAlert(`Error: ${error.message}`);
+            }
+        } finally {
+            forgeUserCancelled = false;
+            clearTimeout(tm);
+            activeAbortController = null;
+            editBtn.disabled = false;
+            editBtn.querySelector('.btn-text').classList.remove('hidden');
+            editBtn.querySelector('.btn-loading').classList.add('hidden');
+            renderBatchFileList();
+        }
     });
 }
 
