@@ -154,19 +154,91 @@ const JEWELRY_UI_PRESETS_FALLBACK = {
     ],
     jewelryProductCategories: [
         {
-            id: 'generic',
-            name: { en: 'General jewelry', zh: '通用珠宝' },
-            promptHint: {
-                en: 'Premium product photo; neutral composition bias.',
-                zh: '通用高级商拍构图。'
-            }
-        },
-        {
             id: 'ring',
             name: { en: 'Ring', zh: '戒指' },
             promptHint: {
                 en: 'Top-down or 3/4 hero angle; band and stone centered; even reflections.',
                 zh: '俯视或四分之三主图角；戒圈与主石居中，反射均匀。'
+            }
+        },
+        {
+            id: 'necklace',
+            name: { en: 'Necklace', zh: '项链' },
+            promptHint: {
+                en: 'Gentle S-curve lay flat; clasp hidden; chain links readable.',
+                zh: '柔和 S 形平铺；链节清晰，扣件尽量不抢眼。'
+            }
+        },
+        {
+            id: 'earring',
+            name: { en: 'Earrings', zh: '耳饰' },
+            promptHint: {
+                en: 'Symmetric pair layout or single stud macro; ear post not distorted.',
+                zh: '对称耳对或单颗耳钉微距；针脚不畸变。'
+            }
+        },
+        {
+            id: 'bracelet',
+            name: { en: 'Bracelet / bangle', zh: '手镯手链' },
+            promptHint: {
+                en: 'Soft oval loop; inner shine visible; clasp area clean.',
+                zh: '柔和椭圆环状；内壁高光可见，扣合区干净。'
+            }
+        },
+        {
+            id: 'jade',
+            name: { en: 'Jade / stone', zh: '玉石文玩' },
+            promptHint: {
+                en: 'Subsurface glow, gentle translucency, no oversharpened veins.',
+                zh: '体现温润通透感，纹理不过锐。'
+            }
+        },
+        {
+            id: 'watch',
+            name: { en: 'Watch', zh: '腕表' },
+            promptHint: {
+                en: 'Dial legible; crystal reflections controlled; crown detail preserved.',
+                zh: '表盘可读，表镜反光克制，表冠细节保留。'
+            }
+        },
+        {
+            id: 'pendant',
+            name: { en: 'Pendant', zh: '吊坠' },
+            promptHint: {
+                en: 'Bail and chain entry visible; pendant faces camera; avoid twisted links.',
+                zh: '扣头与链节入口清晰，坠体正面朝向镜头，链节尽量不绞在一起。'
+            }
+        },
+        {
+            id: 'brooch',
+            name: { en: 'Brooch / pin', zh: '胸针' },
+            promptHint: {
+                en: 'Pin mechanism discreet; frontal or slight 3/4; stones and enamel read clearly.',
+                zh: '针背结构尽量不抢眼，正面或略四分之三角，宝石与珐琅层次可读。'
+            }
+        },
+        {
+            id: 'pearls',
+            name: { en: 'Pearl strand', zh: '珍珠串珠' },
+            promptHint: {
+                en: 'Luster gradient along each pearl; knot spacing even; no plastic chalky look.',
+                zh: '每颗珍珠体现光泽渐变，打结间距均匀，避免塑料发闷感。'
+            }
+        },
+        {
+            id: 'cufflinks',
+            name: { en: 'Cufflinks', zh: '袖扣' },
+            promptHint: {
+                en: 'Pair aligned symmetrically; face detail sharp; backs minimal in frame.',
+                zh: '成对对称摆放，正面细节清晰，背面尽量少入画。'
+            }
+        },
+        {
+            id: 'generic',
+            name: { en: 'General jewelry', zh: '通用珠宝' },
+            promptHint: {
+                en: 'Premium product photo; neutral composition bias.',
+                zh: '通用高级商拍构图。'
             }
         }
     ],
@@ -177,6 +249,78 @@ const JEWELRY_UI_PRESETS_FALLBACK = {
             prompt: {
                 en: 'Place on deep navy velvet with soft studio light, subtle gradient, premium catalog look.',
                 zh: '深蓝丝绒衬底，柔和棚拍光，轻微渐变，高级目录风。'
+            }
+        },
+        {
+            id: 'marble_gold',
+            name: { en: 'Marble & gold', zh: '大理石金边' },
+            prompt: {
+                en: 'Elegant white marble surface with thin gold trim reflections, soft daylight window.',
+                zh: '白色大理石台面与细金边反射感，柔和日光窗光。'
+            }
+        },
+        {
+            id: 'bokeh_rose',
+            name: { en: 'Rose bokeh', zh: '玫瑰散景' },
+            prompt: {
+                en: 'Warm rose-gold bokeh background, shallow depth of field, jewelry hero framing.',
+                zh: '暖玫瑰金散景背景，浅景深，珠宝主图构图。'
+            }
+        },
+        {
+            id: 'minimal_360',
+            name: { en: 'Minimal 360 pad', zh: '极简转盘' },
+            prompt: {
+                en: 'Minimal gray seamless cyclorama, soft top light, e-commerce 360-style pad.',
+                zh: '极简灰色无缝弧面，顶柔光，电商转盘台风格。'
+            }
+        },
+        {
+            id: 'jade_wood',
+            name: { en: 'Wood + jade mood', zh: '木座文玩' },
+            prompt: {
+                en: 'Dark walnut display stand, soft side light, cultural luxury still life.',
+                zh: '深色胡桃木座，侧柔光，文玩静物质感。'
+            }
+        },
+        {
+            id: 'satin_champagne',
+            name: { en: 'Champagne satin', zh: '香槟缎面' },
+            prompt: {
+                en: 'Soft champagne satin drape, gentle folds, warm key light, high-end boutique still life.',
+                zh: '香槟色缎面衬布，柔和褶皱纹理，暖主光，精品店静物感。'
+            }
+        },
+        {
+            id: 'black_lucite',
+            name: { en: 'Black lucite riser', zh: '黑亚克力展台' },
+            prompt: {
+                en: 'Sleek black acrylic riser, crisp reflections, controlled studio rim light, modern catalog.',
+                zh: '黑色亚克力几何展台，克制反光与轮廓光，现代目录棚拍。'
+            }
+        },
+        {
+            id: 'frost_glass',
+            name: { en: 'Frosted glass', zh: '磨砂玻璃台' },
+            prompt: {
+                en: 'Frosted glass surface with soft diffusion, cool-neutral fill, minimal luxury tabletop.',
+                zh: '磨砂玻璃台面，柔和漫反射，冷中性补光，极简轻奢台面。'
+            }
+        },
+        {
+            id: 'golden_hour_soft',
+            name: { en: 'Warm sunset glow', zh: '暖金夕阳光' },
+            prompt: {
+                en: 'Warm late-afternoon sunlight, long soft shadows, editorial jewelry hero without harsh hotspots.',
+                zh: '暖色夕阳光感，长而柔和的阴影，杂志主图光比，避免过曝高光斑。'
+            }
+        },
+        {
+            id: 'cool_teal_studio',
+            name: { en: 'Cool teal gradient', zh: '青绿渐变棚' },
+            prompt: {
+                en: 'Seamless cool teal-to-graphite gradient cyclorama, softbox key, subtle edge light on metal.',
+                zh: '青绿至石墨灰无缝渐变背景，柔光箱主光，金属边缘略提亮。'
             }
         }
     ]
@@ -447,6 +591,8 @@ const i18n = {
         'jewelry.batchRun': 'Process in order',
         'jewelry.quickHint':
             'No long prompts needed — pick a category, upload, and go. Advanced options stay folded below.',
+        'jewelry.injectHint':
+            'Category text is prefixed to every jewelry edit prompt; the scene chip is appended only in Scene composite mode — same string as in POST /api/edit body.',
         'jewelry.pickCategory': 'Category',
         'jewelry.pickScene': 'Set & lighting',
         'jewelry.advancedTitle': 'Export, exclusions & batch',
@@ -602,6 +748,8 @@ const i18n = {
         'jewelry.batchClear': '清空',
         'jewelry.batchRun': '顺序处理',
         'jewelry.quickHint': '不用写长提示词，点选品类后上传即可；导出与批量收在下方折叠里。',
+        'jewelry.injectHint':
+            '所选「品类」会作为构图提示前缀拼入每次珠宝编辑请求；「布景光感」仅在「场景合成」模式下追加在模板提示之后，与提交到 /api/edit 的 prompt 字段一致。',
         'jewelry.pickCategory': '品类',
         'jewelry.pickScene': '布景光感',
         'jewelry.advancedTitle': '导出、排除与批量',
@@ -1216,6 +1364,29 @@ async function loadForgePresets() {
         if (r.ok) raw = await r.json();
     } catch (_) {
         raw = null;
+    }
+    const jewelryLooksEmpty =
+        !raw ||
+        typeof raw !== 'object' ||
+        !Array.isArray(raw.jewelryProductCategories) ||
+        raw.jewelryProductCategories.length === 0 ||
+        !Array.isArray(raw.jewelryScenePacks) ||
+        raw.jewelryScenePacks.length === 0;
+    if (jewelryLooksEmpty) {
+        try {
+            const r2 = await fetch(apiUrl('/workflows/presets.json'));
+            if (r2.ok) {
+                const alt = await r2.json();
+                if (
+                    alt &&
+                    typeof alt === 'object' &&
+                    Array.isArray(alt.jewelryProductCategories) &&
+                    alt.jewelryProductCategories.length > 0
+                ) {
+                    raw = { ...(typeof raw === 'object' && raw ? raw : {}), ...alt };
+                }
+            }
+        } catch (_) {}
     }
     forgePresets = mergeJewelryUiPresets(raw);
     renderEditPresetChips();
