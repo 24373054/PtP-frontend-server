@@ -98,6 +98,122 @@ function apiUrl(path) {
     return `${b.replace(/\/$/, '')}${p}`;
 }
 
+/**
+ * API 未就绪或返回缺字段时，珠宝导出/品类/提示仍可用（与 workflows/presets.json 对齐的子集）。
+ */
+const JEWELRY_UI_PRESETS_FALLBACK = {
+    editPresets: {
+        upscale_main: {
+            name: { en: 'HD enhance (prompt)', zh: '高清增强' },
+            prompt: {
+                en: 'Enhance clarity and micro-detail: sharper edges, reduce noise, preserve original composition and content, avoid hallucinated new objects.',
+                zh: '提升清晰度与细节：边缘更锐利、降噪，保持原构图与内容，不要凭空增加物体。'
+            }
+        },
+        background_main: {
+            name: { en: 'Background repaint (prompt)', zh: '背景重绘' },
+            prompt: {
+                en: 'Replace or repaint ONLY the background; keep the foreground subject pixel-accurate with clean edges; seamless blend.',
+                zh: '仅替换或重绘背景，前景主体边缘干净、与背景自然融合，不改变主体形状。'
+            }
+        },
+        jewelry_metal_fire: {
+            name: { en: 'Metal & fire polish', zh: '金属火彩' },
+            prompt: {
+                en: 'Polish precious metal reflections and gemstone fire; micro-contrast on facets; no geometry change.',
+                zh: '强化贵金属反光与宝石火彩，刻面微对比，不改变几何外形。'
+            }
+        },
+        jewelry_white_pure: {
+            name: { en: 'Pure white catalog', zh: '纯白目录' },
+            prompt: {
+                en: 'Isolate product on pure white #FFFFFF seamless background; crisp edge; soft contact shadow only.',
+                zh: '纯白无缝背景商品隔离；边缘利落，仅保留极轻接触阴影。'
+            }
+        }
+    },
+    exportPresets: [
+        {
+            id: 'square_800',
+            name: { en: 'Square 800 (main)', zh: '主图 800×800' },
+            width: 800,
+            height: 800
+        },
+        {
+            id: 'square_1000',
+            name: { en: 'Square 1000', zh: '主图 1000×1000' },
+            width: 1000,
+            height: 1000
+        },
+        {
+            id: 'taobao_detail',
+            name: { en: 'Detail 750×1000', zh: '详情竖图 750×1000' },
+            width: 750,
+            height: 1000
+        }
+    ],
+    jewelryProductCategories: [
+        {
+            id: 'generic',
+            name: { en: 'General jewelry', zh: '通用珠宝' },
+            promptHint: {
+                en: 'Premium product photo; neutral composition bias.',
+                zh: '通用高级商拍构图。'
+            }
+        },
+        {
+            id: 'ring',
+            name: { en: 'Ring', zh: '戒指' },
+            promptHint: {
+                en: 'Top-down or 3/4 hero angle; band and stone centered; even reflections.',
+                zh: '俯视或四分之三主图角；戒圈与主石居中，反射均匀。'
+            }
+        }
+    ],
+    jewelryScenePacks: [
+        {
+            id: 'velvet_navy',
+            name: { en: 'Navy velvet', zh: '深蓝绒布' },
+            prompt: {
+                en: 'Place on deep navy velvet with soft studio light, subtle gradient, premium catalog look.',
+                zh: '深蓝丝绒衬底，柔和棚拍光，轻微渐变，高级目录风。'
+            }
+        }
+    ]
+};
+
+function clonePresetsJson(o) {
+    try {
+        return typeof structuredClone === 'function'
+            ? structuredClone(o)
+            : JSON.parse(JSON.stringify(o));
+    } catch (_) {
+        return o;
+    }
+}
+
+function mergeJewelryUiPresets(server) {
+    const fb = JEWELRY_UI_PRESETS_FALLBACK;
+    if (!server || typeof server !== 'object') {
+        return clonePresetsJson(fb);
+    }
+    const out = clonePresetsJson(server);
+    out.editPresets = { ...fb.editPresets, ...(server.editPresets || {}) };
+    if (!Array.isArray(server.exportPresets) || server.exportPresets.length === 0) {
+        out.exportPresets = clonePresetsJson(fb.exportPresets);
+    }
+    if (
+        !Array.isArray(server.jewelryProductCategories) ||
+        server.jewelryProductCategories.length === 0
+    ) {
+        out.jewelryProductCategories = clonePresetsJson(fb.jewelryProductCategories);
+    }
+    if (!Array.isArray(server.jewelryScenePacks) || server.jewelryScenePacks.length === 0) {
+        out.jewelryScenePacks = clonePresetsJson(fb.jewelryScenePacks);
+    }
+    return out;
+}
+
 const HISTORY_STORAGE_KEY = 'imageforge_history_v1';
 const HISTORY_LIMIT = 40;
 const TASK_CLIENT_TIMEOUT_MS = 600000;
@@ -112,7 +228,7 @@ let currentOriginalImage = null;
 let currentUser = null;
 let currentAccessCode = null;
 let editIntentTask = 'style';
-let forgePresets = null;
+let forgePresets = mergeJewelryUiPresets(null);
 let activeAbortController = null;
 let compareBeforeDataUrl = null;
 let lastResultSummary = {};
@@ -651,6 +767,7 @@ function applyHomeTaskIntent(task) {
     updateEditModeBanner();
     updateJewelryFlowLayout();
     renderBatchFileList();
+    updateEditButton();
 }
 
 function buildJewelryCategoryPrefix() {
@@ -812,25 +929,29 @@ function updateJewelryFlowLayout() {
 }
 
 function populateJewelryUi() {
-    if (!forgePresets) return;
     const lang = currentLang === 'zh' ? 'zh' : 'en';
     renderJewelryCategoryChips();
     const expSel = document.getElementById('jewelryExportSelect');
-    if (expSel && forgePresets.exportPresets) {
+    if (expSel) {
         const prev = expSel.value;
+        const list = Array.isArray(forgePresets.exportPresets)
+            ? forgePresets.exportPresets
+            : [];
         expSel.innerHTML = '';
         const o0 = document.createElement('option');
         o0.value = '';
         o0.textContent =
             currentLang === 'zh' ? '不缩放（仅 Comfy 输出）' : 'No resize (Comfy output only)';
         expSel.appendChild(o0);
-        forgePresets.exportPresets.forEach((p) => {
+        list.forEach((p) => {
             const o = document.createElement('option');
             o.value = p.id;
             o.textContent = `${p.name[lang] || p.name.en} (${p.width}×${p.height})`;
             expSel.appendChild(o);
         });
-        if (prev) expSel.value = prev;
+        if (prev && [...expSel.options].some((opt) => opt.value === prev)) {
+            expSel.value = prev;
+        }
     }
     renderJewelrySceneChips();
 }
@@ -1062,14 +1183,20 @@ function closeHistoryModal() {
 }
 
 async function loadForgePresets() {
+    let raw = null;
     try {
         const r = await fetch(apiUrl('/api/presets'));
-        if (r.ok) forgePresets = await r.json();
+        if (r.ok) raw = await r.json();
     } catch (_) {
-        forgePresets = null;
+        raw = null;
     }
+    forgePresets = mergeJewelryUiPresets(raw);
     renderEditPresetChips();
     populateJewelryUi();
+    if (typeof editMode !== 'undefined' && editMode && editMode.classList.contains('active')) {
+        updateJewelryFlowLayout();
+    }
+    updateEditButton();
 }
 
 function renderEditPresetChips() {
@@ -1312,6 +1439,7 @@ function switchLanguage(lang) {
         updateEditModeBanner();
         updateJewelryFlowLayout();
     }
+    updateEditButton();
 }
 
 // 更新下载按钮文本
