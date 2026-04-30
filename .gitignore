@@ -1,6 +1,8 @@
 node_modules/
 uploads/
 outputs/
+# Full-size demo PNGs from tools/generate-jewelry-demos.mjs (thumbs only in git)
+public/assets/jewelry-demo/*.png
 *.log
 .ptp.pid
 .DS_Store

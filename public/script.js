@@ -455,13 +455,13 @@ const i18n = {
         'jewelry.demo.before': 'Typical input',
         'jewelry.demo.after': 'Target look',
         'jewelry.demo.caption.jewelry_retouch':
-            'Polish metal and gemstone sparkle while keeping shape — illustrated with a stylized sample.',
+            'Real pipeline: text-to-image base plate → img2img jewelry_retouch. Thumbnails in repo; run npm run generate:jewelry-demos to refresh.',
         'jewelry.demo.caption.jewelry_cutout':
-            'Isolate the piece on a clean white catalog background — sample is synthetic, your photo drives the result.',
+            'Real pipeline: T2I busy tabletop → jewelry_product_cutout. Your uploads use the same /api/edit path.',
         'jewelry.demo.caption.jewelry_scene':
-            'Composite onto a soft luxury set — pick a preset scene chip; sample shows the idea only.',
+            'Real pipeline: T2I flat gray set → jewelry_scene. Use scene chips in-app for your photos.',
         'jewelry.demo.caption.jewelry_macro':
-            'Bring out micro-facets and engraving legibility — sample is exaggerated for clarity.',
+            'Real pipeline: T2I softer wide shot → jewelry_macro_detail.',
         'edit.samples': 'Sample images',
         'edit.sampleWarm': 'Warm gradient',
         'edit.sampleCool': 'Cool gradient',
@@ -610,13 +610,13 @@ const i18n = {
         'jewelry.demo.before': '常见实拍',
         'jewelry.demo.after': '目标商拍',
         'jewelry.demo.caption.jewelry_retouch':
-            '强化金属与宝石火彩、保持轮廓 — 下图为程序生成的示意，非真实推理结果。',
+            '真机样张：Flux2 文生图「偏灰实拍感底图」→ 本服务 jewelry_retouch 图生图缩略图；与线上一致。可运行 npm run generate:jewelry-demos 重新生成。',
         'jewelry.demo.caption.jewelry_cutout':
-            '主体与白底目录图分离 — 示意仅帮助理解，实际以您的照片为准。',
+            '真机样张：文生图杂乱台面底图 → jewelry_product_cutout 抠白底；您上传后走同一套接口。',
         'jewelry.demo.caption.jewelry_scene':
-            '轻奢布景合成 — 布景由上方芯片默认/切换；示意仅作版式参考。',
+            '真机样张：文生图平淡灰底 → jewelry_scene + 深蓝绒布布景句；创作页可换布景芯片。',
         'jewelry.demo.caption.jewelry_macro':
-            '微距细节与刻面 — 示意略夸张以便看清差异。',
+            '真机样张：文生图主体略小略软 → jewelry_macro_detail 微距增强路径。',
         'edit.samples': '样例图',
         'edit.sampleWarm': '暖色渐变',
         'edit.sampleCool': '冷色渐变',
@@ -819,6 +819,33 @@ function getEditPresetChipKeys() {
     return ['style_portrait', 'style_vintage', 'style_id'];
 }
 
+const JEWELRY_DEMO_SLUG = {
+    jewelry_retouch: 'retouch',
+    jewelry_cutout: 'cutout',
+    jewelry_scene: 'scene',
+    jewelry_macro: 'macro'
+};
+/** 与 tools/generate-jewelry-demos.mjs 产出同步；更新资源后 bump 以破缓存 */
+const JEWELRY_DEMO_ASSET_VER = '20260501';
+
+function syncJewelryDemoImages() {
+    const beforeImg = document.getElementById('jewelryDemoBefore');
+    const afterImg = document.getElementById('jewelryDemoAfter');
+    if (!beforeImg || !afterImg) return;
+    const slug = JEWELRY_DEMO_SLUG[editIntentTask];
+    if (!slug) return;
+    const q = `?v=${encodeURIComponent(JEWELRY_DEMO_ASSET_VER)}`;
+    const fallback = () => {
+        beforeImg.onerror = null;
+        afterImg.onerror = null;
+        refreshJewelryDemoArt();
+    };
+    beforeImg.onerror = fallback;
+    afterImg.onerror = fallback;
+    beforeImg.src = `${apiUrl(`/assets/jewelry-demo/thumb-before-${slug}.jpg`)}${q}`;
+    afterImg.src = `${apiUrl(`/assets/jewelry-demo/thumb-after-${slug}.jpg`)}${q}`;
+}
+
 function syncJewelryDemoCaption() {
     const cap = document.getElementById('jewelryDemoCaption');
     if (!cap) return;
@@ -922,7 +949,7 @@ function updateJewelryFlowLayout() {
     if (sampleRow) sampleRow.classList.toggle('hidden', j);
 
     if (j) {
-        refreshJewelryDemoArt();
+        syncJewelryDemoImages();
         syncJewelryDemoCaption();
         renderJewelrySceneChips();
     }
