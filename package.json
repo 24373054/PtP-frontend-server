@@ -1,5 +1,5 @@
 {
-  "name": "p2p-image-editor",
+  "name": "imageforge-web",
   "version": "1.0.0",
   "description": "Minimalist image editor powered by Flux2",
   "main": "server.js",

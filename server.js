@@ -3,6 +3,7 @@ const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
@@ -10,19 +11,86 @@ const sharp = require('sharp');
 const app = express();
 const PORT = 38024;
 
-// 多个ComfyUI实例配置
+// 多个 ComfyUI 实例（单机单卡时只保留一个；多卡多进程时再追加端口）
 const COMFYUI_INSTANCES = [
-    'http://127.0.0.1:8188',  // GPU 4
-    'http://127.0.0.1:8189',  // GPU 5
-    'http://127.0.0.1:8190',  // GPU 6
-    'http://127.0.0.1:8191'   // GPU 7
+    'http://127.0.0.1:8188'
 ];
 
 // 单实例模式（向后兼容）
 const COMFYUI_URL = COMFYUI_INSTANCES[0];
 
+// 与本地 ComfyUI models 扫描结果一致；旧机器若路径不同可设环境变量覆盖
+const COMFYUI_UNET_NAME =
+    process.env.COMFYUI_UNET_NAME || 'flux-2-klein-9b-fp8.safetensors';
+const COMFYUI_CLIP_NAME =
+    process.env.COMFYUI_CLIP_NAME ||
+    'split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors';
+const COMFYUI_VAE_NAME =
+    process.env.COMFYUI_VAE_NAME || 'full_encoder_small_decoder.safetensors';
+
+function comfyuiErrorMessage(error, fallback = 'ComfyUI 请求失败') {
+    const d = error.response?.data;
+    if (d !== undefined && d !== null) {
+        if (typeof d === 'string' && d.trim()) return d.trim().slice(0, 2000);
+        if (typeof d === 'object') {
+            const msg =
+                d.error?.message ||
+                d.message ||
+                (typeof d.error === 'string' ? d.error : null);
+            if (msg) return String(msg).slice(0, 2000);
+            try {
+                return JSON.stringify(d).slice(0, 2000);
+            } catch (_) {
+                /* ignore */
+            }
+        }
+    }
+    return error.message || fallback;
+}
+
 // 用户数据文件路径
 const USERS_FILE = path.join(__dirname, 'users.json');
+const PRESETS_FILE = path.join(__dirname, 'workflows', 'presets.json');
+
+let APP_PACKAGE = { name: 'p2p-image-editor', version: '1.0.0' };
+try {
+    APP_PACKAGE = JSON.parse(
+        fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')
+    );
+} catch (_) {
+    /* keep defaults */
+}
+
+/** 与 GET /api/version 及 public/version-info.json 共用，便于设置页在 API 未部署时回退读取静态文件 */
+function getVersionPayload() {
+    return {
+        name: APP_PACKAGE.name,
+        version: APP_PACKAGE.version,
+        role: 'imageforge-web-bff',
+        comfyuiUrl: COMFYUI_URL,
+        hint:
+            'Web 仅请求本服务；ComfyUI 由服务端转发。鸿蒙端可对齐同一 REST/SSE 契约。'
+    };
+}
+
+const VERSION_INFO_PUBLIC_PATH = path.join(__dirname, 'public', 'version-info.json');
+function writePublicVersionInfoFile() {
+    try {
+        const payload = {
+            ...getVersionPayload(),
+            _staticFallback: true,
+            _writtenAt: new Date().toISOString()
+        };
+        fs.writeFileSync(
+            VERSION_INFO_PUBLIC_PATH,
+            JSON.stringify(payload, null, 2),
+            'utf8'
+        );
+    } catch (err) {
+        console.warn('[version-info.json]', err.message);
+    }
+}
+writePublicVersionInfoFile();
 
 // 订阅方案配置
 const SUBSCRIPTION_PLANS = {
@@ -186,10 +254,12 @@ const upload = multer({
     }
 });
 
-// 静态文件服务
-app.use(express.static('public'));
-app.use('/outputs', express.static(OUTPUT_DIR));
 app.use(express.json());
+
+// 靠前注册，避免线上进程因旧代码或未执行到文件后部而缺少该路由（Cannot GET /api/version）
+app.get('/api/version', (req, res) => {
+    res.json(getVersionPayload());
+});
 
 // API: 用户认证
 app.post('/api/auth', (req, res) => {
@@ -235,9 +305,15 @@ async function uploadImageToComfyUI(filePath, filename) {
     formData.append('image', fs.createReadStream(filePath), filename);
     formData.append('overwrite', 'true');
     
-    await axios.post(`${COMFYUI_URL}/upload/image`, formData, {
-        headers: formData.getHeaders()
-    });
+    try {
+        await axios.post(`${COMFYUI_URL}/upload/image`, formData, {
+            headers: formData.getHeaders()
+        });
+    } catch (error) {
+        throw new Error(
+            `上传到 ComfyUI 失败: ${comfyuiErrorMessage(error)}`
+        );
+    }
 }
 
 // 生成P2P工作流（图片编辑）
@@ -287,14 +363,14 @@ function generateP2PWorkflow(imageName, prompt, seed) {
         },
         "75:70": {
             "inputs": {
-                "unet_name": "flux2/FLUX.2-klein-9b-fp8/flux-2-klein-9b-fp8.safetensors",
+                "unet_name": COMFYUI_UNET_NAME,
                 "weight_dtype": "default"
             },
             "class_type": "UNETLoader"
         },
         "75:71": {
             "inputs": {
-                "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+                "clip_name": COMFYUI_CLIP_NAME,
                 "type": "flux2",
                 "device": "default"
             },
@@ -302,7 +378,7 @@ function generateP2PWorkflow(imageName, prompt, seed) {
         },
         "75:72": {
             "inputs": {
-                "vae_name": "flux2-vae.safetensors"
+                "vae_name": COMFYUI_VAE_NAME
             },
             "class_type": "VAELoader"
         },
@@ -383,6 +459,82 @@ function generateP2PWorkflow(imageName, prompt, seed) {
     };
 }
 
+/** 前端 / 客户端传入的模板别名 → 内部 ID */
+const EDIT_TEMPLATE_ALIASES = {
+    style: 'img2img_style',
+    img2img_style: 'img2img_style',
+    upscale: 'image_upscale',
+    image_upscale: 'image_upscale',
+    background: 'background_repaint',
+    bg: 'background_repaint',
+    background_repaint: 'background_repaint'
+};
+
+/**
+ * 三类编辑在 ComfyUI 图上的真实差异（非仅提示词）：
+ * - 风格化：低步数、1MP 量级、nearest 缩放
+ * - 高清增强：lanczos + 更高 megapixels + 更高 steps（真上采样后再走 Flux2）
+ * - 背景重绘：中等步数 + 略提高 CFG，强化文本对画面的牵引
+ */
+const EDIT_VARIANT_INPUT_PATCHES = {
+    img2img_style: {
+        '75:80': { upscale_method: 'nearest-exact', megapixels: 1 },
+        '75:62': { steps: 4 },
+        '75:63': { cfg: 1 },
+        '9': { filename_prefix: 'if-style' }
+    },
+    image_upscale: {
+        '75:80': { upscale_method: 'lanczos', megapixels: 2.25 },
+        '75:62': { steps: 12 },
+        '75:63': { cfg: 1 },
+        '9': { filename_prefix: 'if-upscale' }
+    },
+    background_repaint: {
+        '75:80': { upscale_method: 'lanczos', megapixels: 1 },
+        '75:62': { steps: 8 },
+        '75:63': { cfg: 1.22 },
+        '9': { filename_prefix: 'if-bg' }
+    }
+};
+
+let editVariantFileCache = null;
+
+function loadEditVariantFilePatches() {
+    if (editVariantFileCache !== null) return editVariantFileCache;
+    try {
+        const p = path.join(__dirname, 'workflows', 'edit_variants.json');
+        editVariantFileCache = JSON.parse(fs.readFileSync(p, 'utf8'));
+    } catch (_) {
+        editVariantFileCache = {};
+    }
+    return editVariantFileCache;
+}
+
+function normalizeEditTemplate(raw) {
+    const k = String(raw || 'img2img_style')
+        .trim()
+        .toLowerCase();
+    return EDIT_TEMPLATE_ALIASES[k] || 'img2img_style';
+}
+
+/** 在 generateP2PWorkflow 基础上按模板合并真实节点参数（可被 edit_variants.json 覆盖） */
+function buildEditWorkflow(templateRaw, imageName, prompt, seed) {
+    const tid = normalizeEditTemplate(templateRaw);
+    const workflow = generateP2PWorkflow(imageName, prompt, seed);
+    const base = EDIT_VARIANT_INPUT_PATCHES[tid] || EDIT_VARIANT_INPUT_PATCHES.img2img_style;
+    const extra = loadEditVariantFilePatches()[tid] || {};
+    const nodeIds = new Set([
+        ...Object.keys(base),
+        ...Object.keys(extra)
+    ]);
+    for (const nodeId of nodeIds) {
+        if (!workflow[nodeId] || !workflow[nodeId].inputs) continue;
+        const patch = { ...(base[nodeId] || {}), ...(extra[nodeId] || {}) };
+        Object.assign(workflow[nodeId].inputs, patch);
+    }
+    return workflow;
+}
+
 // 生成T2I工作流（文字生成图片）
 function generateT2IWorkflow(prompt, width, height, seed, steps, cfg, filenamePrefix = 't2i-gen') {
     return {
@@ -450,14 +602,14 @@ function generateT2IWorkflow(prompt, width, height, seed, steps, cfg, filenamePr
         },
         "77:70": {
             "inputs": {
-                "unet_name": "flux2/FLUX.2-klein-9b-fp8/flux-2-klein-9b-fp8.safetensors",
+                "unet_name": COMFYUI_UNET_NAME,
                 "weight_dtype": "default"
             },
             "class_type": "UNETLoader"
         },
         "77:71": {
             "inputs": {
-                "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+                "clip_name": COMFYUI_CLIP_NAME,
                 "type": "flux2",
                 "device": "default"
             },
@@ -465,7 +617,7 @@ function generateT2IWorkflow(prompt, width, height, seed, steps, cfg, filenamePr
         },
         "77:72": {
             "inputs": {
-                "vae_name": "flux2-vae.safetensors"
+                "vae_name": COMFYUI_VAE_NAME
             },
             "class_type": "VAELoader"
         },
@@ -504,11 +656,17 @@ function generateT2IWorkflow(prompt, width, height, seed, steps, cfg, filenamePr
 
 // 提交工作流到ComfyUI
 async function queuePrompt(workflow) {
-    const response = await axios.post(`${COMFYUI_URL}/prompt`, {
-        prompt: workflow,
-        client_id: uuidv4()
-    });
-    return response.data.prompt_id;
+    try {
+        const response = await axios.post(`${COMFYUI_URL}/prompt`, {
+            prompt: workflow,
+            client_id: uuidv4()
+        });
+        return response.data.prompt_id;
+    } catch (error) {
+        throw new Error(
+            `ComfyUI /prompt: ${comfyuiErrorMessage(error)}`
+        );
+    }
 }
 
 // 生成缩略图
@@ -600,11 +758,17 @@ async function generateImagesParallel(prompt, width, height, seed, steps, cfg, c
 
 // 提交工作流到指定实例
 async function queuePromptToInstance(instanceUrl, workflow) {
-    const response = await axios.post(`${instanceUrl}/prompt`, {
-        prompt: workflow,
-        client_id: uuidv4()
-    });
-    return response.data.prompt_id;
+    try {
+        const response = await axios.post(`${instanceUrl}/prompt`, {
+            prompt: workflow,
+            client_id: uuidv4()
+        });
+        return response.data.prompt_id;
+    } catch (error) {
+        throw new Error(
+            `ComfyUI /prompt (${instanceUrl}): ${comfyuiErrorMessage(error)}`
+        );
+    }
 }
 
 // 从指定实例等待完成
@@ -1046,7 +1210,7 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'No image uploaded' });
         }
         
-        const { prompt, accessCode } = req.body;
+        const { prompt, accessCode, workflowTemplate } = req.body;
         
         if (!accessCode) {
             return res.status(401).json({ error: 'Access code is required' });
@@ -1078,8 +1242,7 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
         // 上传图片到ComfyUI
         await uploadImageToComfyUI(req.file.path, imageName);
         
-        // 生成并提交工作流
-        const workflow = generateP2PWorkflow(imageName, prompt, seed);
+        const workflow = buildEditWorkflow(workflowTemplate, imageName, prompt, seed);
         const promptId = await queuePrompt(workflow);
         
         // 等待完成
@@ -1123,7 +1286,7 @@ app.post('/api/edit-stream', upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'No image uploaded' });
         }
         
-        const { prompt, accessCode } = req.body;
+        const { prompt, accessCode, workflowTemplate } = req.body;
         
         if (!accessCode) {
             return res.status(401).json({ error: 'Access code is required' });
@@ -1171,8 +1334,7 @@ app.post('/api/edit-stream', upload.single('image'), async (req, res) => {
             
             sendEvent({ status: 'preparing', progress: 15, message: 'Preparing workflow...' });
             
-            // 生成并提交工作流
-            const workflow = generateP2PWorkflow(imageName, prompt, seed);
+            const workflow = buildEditWorkflow(workflowTemplate, imageName, prompt, seed);
             const promptId = await queuePrompt(workflow);
             
             sendEvent({ status: 'queued', progress: 20, message: 'Workflow submitted...' });
@@ -1243,10 +1405,57 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
+// 工作流模板清单与编辑预置（与 workflows/presets.json 同步，供 Web / 移动端共用）
+app.get('/api/presets', (req, res) => {
+    try {
+        const raw = fs.readFileSync(PRESETS_FILE, 'utf8');
+        res.type('application/json').send(raw);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to read presets', details: error.message });
+    }
+});
+
+// 编辑类工作流：各模板在 ComfyUI 节点上的真实参数差异（及可选 edit_variants.json 覆盖）
+app.get('/api/edit-variants', (req, res) => {
+    res.json({
+        aliases: EDIT_TEMPLATE_ALIASES,
+        builtinPatches: EDIT_VARIANT_INPUT_PATCHES,
+        fileOverrides: loadEditVariantFilePatches()
+    });
+});
+
+// 静态与产物目录放在 API 之后，避免意外覆盖 /api 等路由
+app.use(express.static('public'));
+app.use('/workflows', express.static(path.join(__dirname, 'workflows')));
+app.use('/outputs', express.static(OUTPUT_DIR));
+
+function lanIPv4Addresses() {
+    const nets = os.networkInterfaces();
+    const out = [];
+    for (const name of Object.keys(nets)) {
+        for (const net of nets[name] || []) {
+            const v4 =
+                net.family === 'IPv4' || net.family === 4;
+            if (v4 && !net.internal) {
+                out.push(net.address);
+            }
+        }
+    }
+    return out;
+}
+
 app.listen(PORT, '0.0.0.0', () => {
+    writePublicVersionInfoFile();
     console.log(`\n=== P2P Image Editor Server ===`);
     console.log(`Local: http://localhost:${PORT}`);
-    console.log(`Network: http://10.143.12.80:${PORT}`);
+    const lan = lanIPv4Addresses();
+    if (lan.length) {
+        for (const addr of lan) {
+            console.log(`Network: http://${addr}:${PORT}`);
+        }
+    } else {
+        console.log('Network: (未发现非回环 IPv4，请用 ip addr 查看本机地址)');
+    }
     console.log(`ComfyUI: ${COMFYUI_URL}`);
     console.log(`================================\n`);
 });

@@ -12,54 +12,53 @@ else
     echo "✗ ComfyUI 未运行"
     echo ""
     echo "请先启动 ComfyUI:"
-    echo "  bash /home/Matrix/yz/AI-movie/ai-comic-drama/start_comfyui.sh"
+    echo "  cd /home/Matrix/yz/ComfyUI && ./comfyui-daemon.sh start"
     echo ""
     exit 1
 fi
 
-# 启动 frpc
+# 先起本机 PtP，再起 frpc（穿透到 127.0.0.1:38024）
 echo ""
-echo "[2/3] 启动 frpc..."
-FRP_DIR="/home/Matrix/yz/frp/frp_0.66.0_linux_amd64"
+echo "[2/3] 启动 PtP 服务..."
+PTP_DIR="/home/Matrix/yz/PtP-frontend-server"
+cd "$PTP_DIR"
 
-# 检查是否已经运行
-if pgrep -f "frpc -c" > /dev/null; then
-    echo "✓ frpc 已在运行"
+if [[ -f "$PTP_DIR/.ptp.pid" ]] && kill -0 "$(cat "$PTP_DIR/.ptp.pid" 2>/dev/null)" 2>/dev/null; then
+    echo "✓ PtP 已在运行（$PTP_DIR/.ptp.pid）"
+elif pgrep -f "$PTP_DIR/server.js" > /dev/null 2>&1; then
+    echo "✓ 已有 node 在跑 $PTP_DIR/server.js"
 else
-    cd $FRP_DIR
-    nohup ./frpc -c frpc.toml > frpc.log 2>&1 &
-    sleep 2
-    
-    if pgrep -f "frpc -c" > /dev/null; then
-        echo "✓ frpc 启动成功"
+    if [[ -x "$PTP_DIR/ptp-daemon.sh" ]]; then
+        "$PTP_DIR/ptp-daemon.sh" start
     else
-        echo "✗ frpc 启动失败，查看日志: $FRP_DIR/frpc.log"
+        echo "✗ 未找到 $PTP_DIR/ptp-daemon.sh，请手动: cd $PTP_DIR && npm start"
         exit 1
     fi
 fi
 
-# 启动 P2P 服务
-echo ""
-echo "[3/3] 启动 P2P 服务..."
-cd /home/Matrix/yz/AI-movie/p2p-server
-
-# 检查是否已经运行
-if pgrep -f "node server.js" > /dev/null; then
-    echo "✗ P2P 服务已在运行，请先停止"
-    echo "  pkill -f 'node server.js'"
+sleep 2
+if ! pgrep -f "$PTP_DIR/server.js" > /dev/null 2>&1 && ! { [[ -f "$PTP_DIR/.ptp.pid" ]] && kill -0 "$(cat "$PTP_DIR/.ptp.pid" 2>/dev/null)" 2>/dev/null; }; then
+    echo "✗ PtP 未就绪，见 $PTP_DIR/ptp-daemon.log"
     exit 1
 fi
+echo "✓ PtP 就绪（日志: $PTP_DIR/ptp-daemon.log）"
 
-nohup node server.js > server.log 2>&1 &
-sleep 2
+echo ""
+echo "[3/3] 启动 frpc..."
+FRP_DIR="/home/Matrix/yz/frp_0.68.1_linux_amd64"
 
-if pgrep -f "node server.js" > /dev/null; then
-    echo "✓ P2P 服务后台启动成功 (PID: $!)"
-    echo "  日志: /home/Matrix/yz/AI-movie/p2p-server/server.log"
-    echo "  停止: pkill -f 'node server.js'"
+if pgrep -f "frpc -c" > /dev/null; then
+    echo "✓ frpc 已在运行"
 else
-    echo "✗ P2P 服务启动失败，查看日志: server.log"
-    exit 1
+    cd "$FRP_DIR"
+    nohup ./frpc -c frpc.toml >>frpc-daemon.log 2>&1 &
+    sleep 2
+    if pgrep -f "frpc -c" > /dev/null; then
+        echo "✓ frpc 启动成功（日志: $FRP_DIR/frpc-daemon.log）"
+    else
+        echo "✗ frpc 启动失败，见 $FRP_DIR/frpc-daemon.log"
+        exit 1
+    fi
 fi
 
 echo ""

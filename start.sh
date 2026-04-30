@@ -11,8 +11,8 @@ if curl -s http://127.0.0.1:8188/system_stats > /dev/null 2>&1; then
 else
     echo "✗ ComfyUI 未运行"
     echo ""
-    echo "请先启动 ComfyUI:"
-    echo "  bash /home/Matrix/yz/AI-movie/ai-comic-drama/start_comfyui.sh"
+    echo "请先启动 ComfyUI（例如）:"
+    echo "  cd /home/Matrix/yz/ComfyUI && ./comfyui-daemon.sh start"
     echo ""
     exit 1
 fi
