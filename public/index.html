@@ -139,6 +139,33 @@
             <main>
                 <div class="mode-content active" id="editMode">
                     <div id="editModeBanner" class="edit-mode-banner" role="status"></div>
+
+                    <div id="jewelryDemoStrip" class="jewelry-demo-strip hidden" aria-live="polite">
+                        <div class="jewelry-demo-ambient" aria-hidden="true"></div>
+                        <div class="jewelry-demo-inner">
+                            <p class="jewelry-demo-eyebrow" data-i18n="jewelry.demo.eyebrow">示例</p>
+                            <h3 class="jewelry-demo-title" data-i18n="jewelry.demo.title">大致效果示意</h3>
+                            <div class="jewelry-demo-stage">
+                                <div class="jewelry-demo-float jewelry-demo-float--before">
+                                    <span class="jewelry-demo-badge" data-i18n="jewelry.demo.before">实拍输入</span>
+                                    <div class="jewelry-demo-img-wrap">
+                                        <img id="jewelryDemoBefore" alt="" width="220" height="220" decoding="async" />
+                                    </div>
+                                </div>
+                                <div class="jewelry-demo-connector" aria-hidden="true">
+                                    <span class="jewelry-demo-arrow"></span>
+                                </div>
+                                <div class="jewelry-demo-float jewelry-demo-float--after">
+                                    <span class="jewelry-demo-badge jewelry-demo-badge--light" data-i18n="jewelry.demo.after">商拍输出</span>
+                                    <div class="jewelry-demo-img-wrap">
+                                        <img id="jewelryDemoAfter" alt="" width="220" height="220" decoding="async" />
+                                    </div>
+                                </div>
+                            </div>
+                            <p class="jewelry-demo-caption" id="jewelryDemoCaption"></p>
+                        </div>
+                    </div>
+
                     <section class="upload-section">
                         <div class="upload-area" id="uploadArea">
                             <input type="file" id="fileInput" accept="image/*" hidden>
@@ -166,7 +193,24 @@
                         <button type="button" class="sample-btn" data-sample="neutral" data-i18n="edit.sampleNeutral">Neutral gray</button>
                     </div>
 
-                    <section class="prompt-section">
+                    <div id="jewelryQuickStrip" class="jewelry-quick-strip hidden">
+                        <p class="jewelry-quick-hint" data-i18n="jewelry.quickHint">无需写长提示词，选好品类即可上传处理。</p>
+                        <div class="jewelry-quick-row">
+                            <span class="jewelry-quick-label" data-i18n="jewelry.pickCategory">品类</span>
+                            <div id="jewelryCategoryBar" class="jewelry-chip-row" role="group"></div>
+                        </div>
+                        <div id="jewelrySceneRow" class="jewelry-quick-row hidden">
+                            <span class="jewelry-quick-label" data-i18n="jewelry.pickScene">布景</span>
+                            <div class="scene-pack-bar" id="jewelrySceneBar"></div>
+                        </div>
+                    </div>
+
+                    <div id="jewelryOptionalStrip" class="jewelry-optional-strip hidden">
+                        <label for="jewelryOptionalHint" class="jewelry-optional-label" data-i18n="jewelry.optionalShort">额外一句（可选）</label>
+                        <input type="text" id="jewelryOptionalHint" class="jewelry-optional-input" maxlength="280" autocomplete="off" />
+                    </div>
+
+                    <section id="classicPromptBlock" class="prompt-section">
                         <label for="promptInput" data-i18n="edit.label">Edit Instructions</label>
                         <textarea
                             id="promptInput"
@@ -181,17 +225,9 @@
 
                     <div class="edit-preset-bar" id="editPresetBar"></div>
 
-                    <details class="jewelry-panel" id="jewelryPanel">
-                        <summary><span data-i18n="jewelry.panelTitle">珠宝商拍</span></summary>
+                    <details class="jewelry-advanced details-glass hidden" id="jewelryAdvancedPanel">
+                        <summary><span data-i18n="jewelry.advancedTitle">导出、排除与批量</span></summary>
                         <div class="jewelry-panel-body">
-                            <div class="jewelry-field">
-                                <label for="jewelryCategorySelect" data-i18n="jewelry.category">品类构图提示</label>
-                                <select id="jewelryCategorySelect" class="jewelry-select"></select>
-                            </div>
-                            <div class="jewelry-field">
-                                <span class="jewelry-label" data-i18n="jewelry.scenes">场景快捷句</span>
-                                <div class="scene-pack-bar" id="jewelrySceneBar"></div>
-                            </div>
                             <div class="jewelry-field jew-row">
                                 <div>
                                     <label for="jewelryExportSelect" data-i18n="jewelry.export">导出尺寸（白底 contain）</label>
@@ -208,6 +244,11 @@
                                     <span data-i18n="jewelry.watermark">水印文字</span>
                                 </label>
                                 <input type="text" id="jewelryWmText" class="jewelry-wm-input" data-i18n-placeholder="jewelry.wmPlaceholder" placeholder="品牌缩写">
+                            </div>
+                            <div class="jewelry-field">
+                                <label for="jewelryNegativePrompt" data-i18n="edit.negativeLabel">Exclude (optional)</label>
+                                <textarea id="jewelryNegativePrompt" rows="2" data-i18n-placeholder="edit.negativePlaceholder" placeholder="Things to avoid..."></textarea>
+                                <p class="neg-hint" data-i18n="edit.negativeHint">Merged into prompt as an exclusion hint for the model.</p>
                             </div>
                             <div class="jewelry-batch">
                                 <span class="jewelry-label" data-i18n="jewelry.batchTitle">批量队列</span>

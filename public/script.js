@@ -131,6 +131,28 @@ const EDIT_WORKFLOW_TEMPLATE = {
     jewelry_macro: 'jewelry_macro_detail'
 };
 
+/** 珠宝一键流：品类芯片、场景句由程序拼装，用户不必写长提示词 */
+let jewelryCategoryId = 'generic';
+let jewelrySceneSnippet = '';
+let jewelrySelectedSceneId = '';
+
+function isJewelryIntent() {
+    return ['jewelry_retouch', 'jewelry_cutout', 'jewelry_scene', 'jewelry_macro'].includes(
+        editIntentTask
+    );
+}
+
+function getActiveNegativeEl() {
+    return isJewelryIntent()
+        ? document.getElementById('jewelryNegativePrompt')
+        : negativePrompt;
+}
+
+function getNegativeForEdit() {
+    const el = getActiveNegativeEl();
+    return el && el.value ? el.value.trim() : '';
+}
+
 // 自定义弹窗函数
 function showAlert(message) {
     customAlertContent.textContent = message;
@@ -307,6 +329,24 @@ const i18n = {
         'jewelry.batchPick': 'Pick multiple',
         'jewelry.batchClear': 'Clear',
         'jewelry.batchRun': 'Process in order',
+        'jewelry.quickHint':
+            'No long prompts needed — pick a category, upload, and go. Advanced options stay folded below.',
+        'jewelry.pickCategory': 'Category',
+        'jewelry.pickScene': 'Set & lighting',
+        'jewelry.optionalShort': 'Extra note (optional, one line)',
+        'jewelry.advancedTitle': 'Export, exclusions & batch',
+        'jewelry.demo.eyebrow': 'Guided preview',
+        'jewelry.demo.title': 'What this mode is aiming for',
+        'jewelry.demo.before': 'Typical input',
+        'jewelry.demo.after': 'Target look',
+        'jewelry.demo.caption.jewelry_retouch':
+            'Polish metal and gemstone sparkle while keeping shape — illustrated with a stylized sample.',
+        'jewelry.demo.caption.jewelry_cutout':
+            'Isolate the piece on a clean white catalog background — sample is synthetic, your photo drives the result.',
+        'jewelry.demo.caption.jewelry_scene':
+            'Composite onto a soft luxury set — pick a preset scene chip; sample shows the idea only.',
+        'jewelry.demo.caption.jewelry_macro':
+            'Bring out micro-facets and engraving legibility — sample is exaggerated for clarity.',
         'edit.samples': 'Sample images',
         'edit.sampleWarm': 'Warm gradient',
         'edit.sampleCool': 'Cool gradient',
@@ -446,6 +486,23 @@ const i18n = {
         'jewelry.batchPick': '选择多张',
         'jewelry.batchClear': '清空',
         'jewelry.batchRun': '顺序处理',
+        'jewelry.quickHint': '不用写长提示词，点选品类后上传即可；导出与批量收在下方折叠里。',
+        'jewelry.pickCategory': '品类',
+        'jewelry.pickScene': '布景光感',
+        'jewelry.optionalShort': '额外一句说明（可选）',
+        'jewelry.advancedTitle': '导出、排除与批量',
+        'jewelry.demo.eyebrow': '效果示意',
+        'jewelry.demo.title': '这个模式在做什么',
+        'jewelry.demo.before': '常见实拍',
+        'jewelry.demo.after': '目标商拍',
+        'jewelry.demo.caption.jewelry_retouch':
+            '强化金属与宝石火彩、保持轮廓 — 下图为程序生成的示意，非真实推理结果。',
+        'jewelry.demo.caption.jewelry_cutout':
+            '主体与白底目录图分离 — 示意仅帮助理解，实际以您的照片为准。',
+        'jewelry.demo.caption.jewelry_scene':
+            '轻奢布景合成 — 布景由上方芯片默认/切换；示意仅作版式参考。',
+        'jewelry.demo.caption.jewelry_macro':
+            '微距细节与刻面 — 示意略夸张以便看清差异。',
         'edit.samples': '样例图',
         'edit.sampleWarm': '暖色渐变',
         'edit.sampleCool': '冷色渐变',
@@ -543,6 +600,7 @@ function showForgePage(page) {
     if (page === 'settings') loadSettingsPanel();
     if (page === 'editor' && editMode && editMode.classList.contains('active')) {
         updateEditModeBanner();
+        updateJewelryFlowLayout();
     }
 }
 
@@ -565,7 +623,18 @@ function updateEditModeBanner() {
 
 function applyHomeTaskIntent(task) {
     editIntentTask = task || 'style';
-    if (forgePresets && forgePresets.editPresets) {
+
+    if (task === 'jewelry_scene' && forgePresets && forgePresets.jewelryScenePacks && forgePresets.jewelryScenePacks.length) {
+        const langKey = currentLang === 'zh' ? 'zh' : 'en';
+        const first = forgePresets.jewelryScenePacks[0];
+        jewelrySceneSnippet = first.prompt[langKey] || first.prompt.en || '';
+        jewelrySelectedSceneId = first.id;
+    } else {
+        jewelrySceneSnippet = '';
+        jewelrySelectedSceneId = '';
+    }
+
+    if (forgePresets && forgePresets.editPresets && !isJewelryIntent()) {
         const langKey = currentLang === 'zh' ? 'zh' : 'en';
         const ep = forgePresets.editPresets;
         let extra = '';
@@ -573,36 +642,27 @@ function applyHomeTaskIntent(task) {
             extra = ep.upscale_main.prompt[langKey] || '';
         else if (task === 'background' && ep.background_main)
             extra = ep.background_main.prompt[langKey] || '';
-        else if (task === 'jewelry_cutout' && ep.jewelry_white_pure)
-            extra = ep.jewelry_white_pure.prompt[langKey] || '';
-        else if (task === 'jewelry_scene' && ep.background_main)
-            extra = ep.background_main.prompt[langKey] || '';
-        else if (task === 'jewelry_macro' && ep.upscale_main)
-            extra = ep.upscale_main.prompt[langKey] || '';
-        else if (task === 'jewelry_retouch' && ep.jewelry_metal_fire)
-            extra = ep.jewelry_metal_fire.prompt[langKey] || '';
         if (extra) {
             const cur = promptInput.value.trim();
             promptInput.value = cur ? `${cur}\n${extra}` : extra;
         }
     }
+
+    const optHint = document.getElementById('jewelryOptionalHint');
+    if (optHint && isJewelryIntent()) optHint.value = '';
+
     renderEditPresetChips();
     populateJewelryUi();
     updateEditModeBanner();
+    updateJewelryFlowLayout();
     renderBatchFileList();
 }
 
 function buildJewelryCategoryPrefix() {
-    if (
-        !['jewelry_retouch', 'jewelry_cutout', 'jewelry_scene', 'jewelry_macro'].includes(
-            editIntentTask
-        )
-    ) {
+    if (!isJewelryIntent() || !forgePresets || !forgePresets.jewelryProductCategories) {
         return '';
     }
-    const sel = document.getElementById('jewelryCategorySelect');
-    if (!sel || !forgePresets || !forgePresets.jewelryProductCategories) return '';
-    const cat = forgePresets.jewelryProductCategories.find((c) => c.id === sel.value);
+    const cat = forgePresets.jewelryProductCategories.find((c) => c.id === jewelryCategoryId);
     if (!cat || !cat.promptHint) return '';
     const langKey = currentLang === 'zh' ? 'zh' : 'en';
     const hint = cat.promptHint[langKey] || cat.promptHint.en;
@@ -643,39 +703,125 @@ function fileToDataUrl(file) {
 }
 
 function getEditPresetChipKeys() {
-    const t = editIntentTask;
-    if (t === 'jewelry_retouch') {
-        return ['jewelry_metal_fire', 'jewelry_gem_sparkle', 'jewelry_antique_patina'];
-    }
-    if (t === 'jewelry_cutout') {
-        return ['jewelry_white_pure', 'background_main'];
-    }
-    if (t === 'jewelry_scene') {
-        return ['background_main', 'jewelry_metal_fire'];
-    }
-    if (t === 'jewelry_macro') {
-        return ['upscale_main', 'jewelry_gem_sparkle'];
-    }
+    if (isJewelryIntent()) return [];
     return ['style_portrait', 'style_vintage', 'style_id'];
+}
+
+function syncJewelryDemoCaption() {
+    const cap = document.getElementById('jewelryDemoCaption');
+    if (!cap) return;
+    const key = `jewelry.demo.caption.${editIntentTask}`;
+    cap.textContent = i18n[currentLang][key] || '';
+}
+
+function paintJewelryDemoBefore(ctx, w, h) {
+    const g = ctx.createRadialGradient(w * 0.35, h * 0.25, 0, w * 0.5, h * 0.55, w * 0.95);
+    g.addColorStop(0, '#5c4033');
+    g.addColorStop(0.35, '#a08060');
+    g.addColorStop(0.65, '#7a8aaa');
+    g.addColorStop(1, '#2a1e18');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 2800; i++) {
+        ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.07})`;
+        ctx.fillRect(Math.random() * w, Math.random() * h, 1.2, 1.2);
+    }
+    drawJewelryDemoPiece(ctx, w, h, false);
+}
+
+function paintJewelryDemoAfter(ctx, w, h) {
+    ctx.fillStyle = '#f4f3f0';
+    ctx.fillRect(0, 0, w, h);
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.14)';
+    ctx.shadowBlur = 36;
+    ctx.shadowOffsetY = 14;
+    drawJewelryDemoPiece(ctx, w, h, true);
+    ctx.restore();
+}
+
+function drawJewelryDemoPiece(ctx, w, h, clean) {
+    const cx = w / 2;
+    const cy = h / 2 + 8;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-0.28);
+    const rg = ctx.createLinearGradient(-55, -40, 55, 55);
+    rg.addColorStop(0, '#efe2c2');
+    rg.addColorStop(0.4, '#f7efd8');
+    rg.addColorStop(0.55, '#c4a05a');
+    rg.addColorStop(1, '#7d6238');
+    ctx.strokeStyle = rg;
+    ctx.lineWidth = clean ? 12 : 13;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 78, 54, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    const gg = ctx.createRadialGradient(-10, -22, 2, 0, -14, 26);
+    gg.addColorStop(0, '#ffffff');
+    gg.addColorStop(0.3, '#dde8ff');
+    gg.addColorStop(0.65, '#6b8cc9');
+    gg.addColorStop(1, '#3a5080');
+    ctx.fillStyle = gg;
+    ctx.beginPath();
+    ctx.moveTo(0, -42);
+    ctx.lineTo(20, -22);
+    ctx.lineTo(0, 4);
+    ctx.lineTo(-20, -22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+}
+
+function refreshJewelryDemoArt() {
+    const beforeImg = document.getElementById('jewelryDemoBefore');
+    const afterImg = document.getElementById('jewelryDemoAfter');
+    if (!beforeImg || !afterImg) return;
+    const w = 440;
+    const h = 440;
+    const c1 = document.createElement('canvas');
+    c1.width = w;
+    c1.height = h;
+    const c2 = document.createElement('canvas');
+    c2.width = w;
+    c2.height = h;
+    paintJewelryDemoBefore(c1.getContext('2d'), w, h);
+    paintJewelryDemoAfter(c2.getContext('2d'), w, h);
+    beforeImg.src = c1.toDataURL('image/jpeg', 0.92);
+    afterImg.src = c2.toDataURL('image/jpeg', 0.92);
+}
+
+function updateJewelryFlowLayout() {
+    const j = isJewelryIntent();
+    const demo = document.getElementById('jewelryDemoStrip');
+    const classic = document.getElementById('classicPromptBlock');
+    const quick = document.getElementById('jewelryQuickStrip');
+    const optStrip = document.getElementById('jewelryOptionalStrip');
+    const adv = document.getElementById('jewelryAdvancedPanel');
+    const sceneRow = document.getElementById('jewelrySceneRow');
+    const presetBar = document.getElementById('editPresetBar');
+    const sampleRow = document.querySelector('#editMode .sample-row');
+
+    if (editMode) editMode.classList.toggle('jewelry-flow', j);
+    if (demo) demo.classList.toggle('hidden', !j);
+    if (classic) classic.classList.toggle('hidden', j);
+    if (quick) quick.classList.toggle('hidden', !j);
+    if (optStrip) optStrip.classList.toggle('hidden', !j);
+    if (adv) adv.classList.toggle('hidden', !j);
+    if (sceneRow) sceneRow.classList.toggle('hidden', !j || editIntentTask !== 'jewelry_scene');
+    if (presetBar) presetBar.classList.toggle('hidden', j);
+    if (sampleRow) sampleRow.classList.toggle('hidden', j);
+
+    if (j) {
+        refreshJewelryDemoArt();
+        syncJewelryDemoCaption();
+        renderJewelrySceneChips();
+    }
 }
 
 function populateJewelryUi() {
     if (!forgePresets) return;
     const lang = currentLang === 'zh' ? 'zh' : 'en';
-    const catSel = document.getElementById('jewelryCategorySelect');
-    if (catSel && forgePresets.jewelryProductCategories) {
-        const prev = catSel.value;
-        catSel.innerHTML = '';
-        forgePresets.jewelryProductCategories.forEach((c) => {
-            const o = document.createElement('option');
-            o.value = c.id;
-            o.textContent = c.name[lang] || c.name.en;
-            catSel.appendChild(o);
-        });
-        if (prev && [...catSel.options].some((opt) => opt.value === prev)) {
-            catSel.value = prev;
-        }
-    }
+    renderJewelryCategoryChips();
     const expSel = document.getElementById('jewelryExportSelect');
     if (expSel && forgePresets.exportPresets) {
         const prev = expSel.value;
@@ -696,20 +842,46 @@ function populateJewelryUi() {
     renderJewelrySceneChips();
 }
 
+function renderJewelryCategoryChips() {
+    const bar = document.getElementById('jewelryCategoryBar');
+    if (!bar || !forgePresets || !forgePresets.jewelryProductCategories) return;
+    const lang = currentLang === 'zh' ? 'zh' : 'en';
+    bar.innerHTML = '';
+    forgePresets.jewelryProductCategories.forEach((c) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className =
+            'jewelry-cat-chip' + (c.id === jewelryCategoryId ? ' jewelry-cat-chip--active' : '');
+        b.textContent = c.name[lang] || c.name.en;
+        b.addEventListener('click', () => {
+            jewelryCategoryId = c.id;
+            renderJewelryCategoryChips();
+            updateEditButton();
+        });
+        bar.appendChild(b);
+    });
+}
+
 function renderJewelrySceneChips() {
     const bar = document.getElementById('jewelrySceneBar');
     if (!bar || !forgePresets || !forgePresets.jewelryScenePacks) return;
-    bar.innerHTML = '';
+    if (editIntentTask !== 'jewelry_scene') {
+        bar.innerHTML = '';
+        return;
+    }
     const lang = currentLang === 'zh' ? 'zh' : 'en';
+    bar.innerHTML = '';
     forgePresets.jewelryScenePacks.forEach((pack) => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'scene-chip';
+        btn.className =
+            'scene-chip' +
+            (jewelrySelectedSceneId === pack.id ? ' scene-chip--active' : '');
         btn.textContent = pack.name[lang] || pack.name.en;
         btn.addEventListener('click', () => {
-            const p = pack.prompt[lang] || pack.prompt.en;
-            const cur = promptInput.value.trim();
-            promptInput.value = cur ? `${cur}\n${p}` : p;
+            jewelrySceneSnippet = pack.prompt[lang] || pack.prompt.en || '';
+            jewelrySelectedSceneId = pack.id;
+            renderJewelrySceneChips();
             updateEditButton();
             renderBatchFileList();
         });
@@ -729,23 +901,77 @@ function renderBatchFileList() {
     });
     if (runBtn) {
         runBtn.disabled =
-            batchQueue.length === 0 ||
-            !promptInput.value.trim() ||
-            !currentAccessCode;
+            batchQueue.length === 0 || !hasValidEditPromptCore() || !currentAccessCode;
     }
 }
 
+/** 不含 negative 附加句，用于判断主提示是否已可由程序拼出 */
+function hasValidEditPromptCore() {
+    let body;
+    if (isJewelryIntent()) {
+        const opt = (document.getElementById('jewelryOptionalHint')?.value || '').trim();
+        const parts = [
+            buildJewelryCategoryPrefix(),
+            buildJewelryAutoBasePrompt(),
+            editIntentTask === 'jewelry_scene' ? jewelrySceneSnippet : '',
+            opt
+        ].filter(Boolean);
+        body = parts.join('\n').trim();
+    } else {
+        body = promptInput.value.trim();
+    }
+    return body.length > 0;
+}
+
+function buildJewelryAutoBasePrompt() {
+    if (!isJewelryIntent() || !forgePresets || !forgePresets.editPresets) return '';
+    const langKey = currentLang === 'zh' ? 'zh' : 'en';
+    const ep = forgePresets.editPresets;
+    let key;
+    if (editIntentTask === 'jewelry_cutout') key = 'jewelry_white_pure';
+    else if (editIntentTask === 'jewelry_scene') key = 'background_main';
+    else if (editIntentTask === 'jewelry_macro') key = 'upscale_main';
+    else if (editIntentTask === 'jewelry_retouch') key = 'jewelry_metal_fire';
+    if (!key || !ep[key]) return '';
+    return ep[key].prompt[langKey] || ep[key].prompt.en || '';
+}
+
 function buildEditPromptForRequest() {
-    let t = buildJewelryCategoryPrefix() + promptInput.value.trim();
-    t = t.trim();
-    const neg = negativePrompt && negativePrompt.value ? negativePrompt.value.trim() : '';
+    let t;
+    if (isJewelryIntent()) {
+        const opt = (document.getElementById('jewelryOptionalHint')?.value || '').trim();
+        const parts = [
+            buildJewelryCategoryPrefix(),
+            buildJewelryAutoBasePrompt(),
+            editIntentTask === 'jewelry_scene' ? jewelrySceneSnippet : '',
+            opt
+        ].filter(Boolean);
+        t = parts.join('\n').trim();
+    } else {
+        t = promptInput.value.trim();
+    }
+    const neg = getNegativeForEdit();
     if (neg) {
         t +=
             currentLang === 'zh'
                 ? `\n\n（请避免出现或弱化：${neg}）`
                 : `\n\n(Avoid or de-emphasize: ${neg})`;
     }
-    return t;
+    return t.trim();
+}
+
+function summarizeEditPromptForDisplay() {
+    if (isJewelryIntent()) {
+        const opt = (document.getElementById('jewelryOptionalHint')?.value || '').trim();
+        const parts = [
+            buildJewelryCategoryPrefix().replace(/\n$/, ''),
+            buildJewelryAutoBasePrompt().slice(0, 120),
+            editIntentTask === 'jewelry_scene' ? jewelrySceneSnippet.slice(0, 120) : '',
+            opt
+        ].filter(Boolean);
+        return parts.join(' · ').slice(0, 400);
+    }
+    return promptInput.value.trim().slice(0, 400);
 }
 
 function resetResultPresentation() {
@@ -1082,8 +1308,22 @@ function switchLanguage(lang) {
     }
     renderEditPresetChips();
     populateJewelryUi();
+    if (
+        isJewelryIntent() &&
+        editIntentTask === 'jewelry_scene' &&
+        jewelrySelectedSceneId &&
+        forgePresets &&
+        forgePresets.jewelryScenePacks
+    ) {
+        const pack = forgePresets.jewelryScenePacks.find((p) => p.id === jewelrySelectedSceneId);
+        if (pack) {
+            const lk = currentLang === 'zh' ? 'zh' : 'en';
+            jewelrySceneSnippet = pack.prompt[lk] || pack.prompt.en || '';
+        }
+    }
     if (typeof editMode !== 'undefined' && editMode.classList.contains('active')) {
         updateEditModeBanner();
+        updateJewelryFlowLayout();
     }
 }
 
@@ -1298,6 +1538,7 @@ tabBtns.forEach(btn => {
             generateMode.classList.remove('active');
             currentMode = 'edit';
             updateEditModeBanner();
+            updateJewelryFlowLayout();
         } else {
             editMode.classList.remove('active');
             generateMode.classList.add('active');
@@ -1436,11 +1677,15 @@ removeBtn.addEventListener('click', (e) => {
 // Prompt input
 promptInput.addEventListener('input', updateEditButton);
 if (negativePrompt) negativePrompt.addEventListener('input', updateEditButton);
+const jewelryOptionalHintEl = document.getElementById('jewelryOptionalHint');
+if (jewelryOptionalHintEl) jewelryOptionalHintEl.addEventListener('input', updateEditButton);
+const jewelryNegativePromptEl = document.getElementById('jewelryNegativePrompt');
+if (jewelryNegativePromptEl)
+    jewelryNegativePromptEl.addEventListener('input', updateEditButton);
 
 function updateEditButton() {
     const hasFile = selectedFile !== null;
-    const hasPrompt = promptInput.value.trim() !== '';
-    editBtn.disabled = !(hasFile && hasPrompt);
+    editBtn.disabled = !(hasFile && hasValidEditPromptCore());
     renderBatchFileList();
 }
 
@@ -1508,20 +1753,22 @@ async function finalizeEditSuccess(finalResult) {
     currentOriginalImage = finalResult.image;
 
     const postSnap = buildPostProcessPayload();
+    const negSnap = getNegativeForEdit();
     lastResultSummary = {
         mode: 'edit',
         taskType: editIntentTask,
         prompt: buildEditPromptForRequest(),
-        neg: negativePrompt ? negativePrompt.value.trim() : ''
+        neg: negSnap
     };
+    const summaryLine = summarizeEditPromptForDisplay();
     setResultMeta([
         `${currentLang === 'zh' ? '模式' : 'Mode'}: edit · ${editIntentTask}`,
         `workflowTemplate: ${EDIT_WORKFLOW_TEMPLATE[editIntentTask] || 'img2img_style'}`,
         postSnap
             ? `${currentLang === 'zh' ? '后处理' : 'Post'}: ${JSON.stringify(postSnap)}`
             : '',
-        `${currentLang === 'zh' ? '提示' : 'Prompt'}: ${promptInput.value.trim().slice(0, 400)}${
-            promptInput.value.trim().length > 400 ? '…' : ''
+        `${currentLang === 'zh' ? '提示摘要' : 'Prompt summary'}: ${summaryLine}${
+            summaryLine.length >= 400 ? '…' : ''
         }`
     ]);
     setCompareAfterEdit(
@@ -1542,7 +1789,9 @@ async function finalizeEditSuccess(finalResult) {
         at: new Date().toISOString(),
         mode: 'edit',
         taskType: editIntentTask,
-        prompt: promptInput.value.trim(),
+        prompt: isJewelryIntent()
+            ? summarizeEditPromptForDisplay()
+            : promptInput.value.trim(),
         params: {
             negative: lastResultSummary.neg || '',
             workflowTemplate:
@@ -1958,9 +2207,11 @@ if (historyModalOpenEditor) {
             editMode.classList.add('active');
             generateMode.classList.remove('active');
             currentMode = 'edit';
-            promptInput.value = historyModalItem.prompt || '';
             if (negativePrompt && historyModalItem.params)
                 negativePrompt.value = historyModalItem.params.negative || '';
+            const jNeg = document.getElementById('jewelryNegativePrompt');
+            if (jNeg && historyModalItem.params)
+                jNeg.value = historyModalItem.params.negative || '';
             const wtRev = {
                 img2img_style: 'style',
                 image_upscale: 'upscale',
@@ -1974,9 +2225,17 @@ if (historyModalOpenEditor) {
             editIntentTask = wt
                 ? wtRev[wt] || historyModalItem.taskType || 'style'
                 : historyModalItem.taskType || 'style';
+            if (isJewelryIntent()) {
+                promptInput.value = '';
+                const oh = document.getElementById('jewelryOptionalHint');
+                if (oh) oh.value = '';
+            } else {
+                promptInput.value = historyModalItem.prompt || '';
+            }
             renderEditPresetChips();
             populateJewelryUi();
             updateEditModeBanner();
+            updateJewelryFlowLayout();
             updateEditButton();
         }
         closeHistoryModal();

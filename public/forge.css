@@ -574,7 +574,245 @@
     }
 }
 
-/* —— 珠宝商拍面板 —— */
+/* —— 珠宝：浸入式示范条（虚化环境 + 玻璃卡，无硬边框盒子感） —— */
+.jewelry-demo-strip {
+    position: relative;
+    margin: 0 -20px 22px;
+    padding: 26px 16px 30px;
+    overflow: hidden;
+}
+
+@media (min-width: 720px) {
+    .jewelry-demo-strip {
+        margin-left: -28px;
+        margin-right: -28px;
+        border-radius: 0;
+    }
+}
+
+.jewelry-demo-ambient {
+    position: absolute;
+    inset: -45%;
+    background: radial-gradient(
+            ellipse 75% 55% at 18% 28%,
+            rgba(218, 186, 150, 0.5),
+            transparent 58%
+        ),
+        radial-gradient(
+            ellipse 65% 50% at 88% 72%,
+            rgba(130, 152, 198, 0.4),
+            transparent 52%
+        ),
+        radial-gradient(
+            ellipse 55% 40% at 48% 95%,
+            rgba(255, 255, 255, 0.55),
+            transparent 48%
+        );
+    filter: blur(46px);
+    opacity: 0.92;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.jewelry-demo-inner {
+    position: relative;
+    z-index: 1;
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 22px 20px 18px;
+    border-radius: 22px;
+    background: linear-gradient(
+        155deg,
+        rgba(255, 255, 255, 0.34),
+        rgba(255, 255, 255, 0.12)
+    );
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.65) inset,
+        0 22px 48px rgba(55, 48, 40, 0.07), 0 10px 26px rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.48);
+}
+
+.jewelry-demo-eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(75, 68, 60, 0.5);
+    margin: 0 0 4px;
+}
+
+.jewelry-demo-title {
+    font-size: 17px;
+    font-weight: 650;
+    letter-spacing: -0.022em;
+    margin: 0 0 18px;
+    color: var(--color-text);
+}
+
+.jewelry-demo-stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.jewelry-demo-float {
+    text-align: center;
+}
+
+.jewelry-demo-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 11px;
+    border-radius: 999px;
+    background: rgba(55, 45, 38, 0.12);
+    color: rgba(48, 42, 36, 0.88);
+    margin-bottom: 10px;
+}
+
+.jewelry-demo-badge--light {
+    background: rgba(255, 255, 255, 0.52);
+    border: 1px solid rgba(255, 255, 255, 0.58);
+}
+
+.jewelry-demo-img-wrap {
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.11);
+    background: rgba(255, 255, 255, 0.32);
+    line-height: 0;
+}
+
+.jewelry-demo-img-wrap img {
+    display: block;
+    width: min(220px, 44vw);
+    height: auto;
+    aspect-ratio: 1;
+    object-fit: cover;
+}
+
+.jewelry-demo-connector {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    opacity: 0.5;
+}
+
+.jewelry-demo-arrow {
+    width: 32px;
+    height: 2px;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(70, 62, 54, 0.4),
+        transparent
+    );
+    position: relative;
+}
+
+.jewelry-demo-arrow::after {
+    content: '';
+    position: absolute;
+    right: -1px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: 5px solid transparent;
+    border-left: 8px solid rgba(70, 62, 54, 0.48);
+}
+
+.jewelry-demo-caption {
+    margin: 16px auto 0;
+    max-width: 540px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--color-text-secondary);
+    text-align: center;
+}
+
+.jewelry-quick-strip {
+    margin-bottom: 6px;
+}
+
+.jewelry-quick-hint {
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    margin: 0 0 12px;
+    line-height: 1.45;
+}
+
+.jewelry-quick-row {
+    margin-bottom: 14px;
+}
+
+.jewelry-quick-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(78, 72, 66, 0.72);
+    margin-bottom: 8px;
+    letter-spacing: 0.02em;
+}
+
+.jewelry-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.jewelry-cat-chip {
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(0, 0, 0, 0.07);
+    background: rgba(255, 255, 255, 0.58);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+.jewelry-cat-chip:hover {
+    background: rgba(255, 255, 255, 0.88);
+}
+
+.jewelry-cat-chip--active {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(185, 145, 95, 0.42);
+    box-shadow: 0 4px 16px rgba(130, 100, 60, 0.12);
+}
+
+.scene-chip--active {
+    border-color: rgba(110, 135, 185, 0.55) !important;
+    background: rgba(232, 238, 252, 0.92) !important;
+    font-weight: 600;
+}
+
+.jewelry-optional-strip {
+    margin-bottom: 14px;
+}
+
+.jewelry-optional-label {
+    display: block;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    margin-bottom: 6px;
+}
+
+.jewelry-optional-input {
+    width: 100%;
+    max-width: 480px;
+    padding: 11px 16px;
+    border-radius: 999px;
+    border: 1px solid var(--glass-stroke-outer);
+    background: rgba(255, 255, 255, 0.78);
+    font-size: 14px;
+}
+
+#editMode.jewelry-flow .edit-mode-banner {
+    margin-bottom: 10px;
+}
+
+/* —— 珠宝商拍：高级项折叠 —— */
 .home-card-jewelry {
     border-color: rgba(180, 140, 90, 0.28);
     background: linear-gradient(
@@ -584,23 +822,25 @@
     );
 }
 
-.jewelry-panel {
-    margin: 16px 0 8px;
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--glass-stroke-outer);
-    background: rgba(255, 255, 255, 0.45);
+.jewelry-advanced.details-glass {
+    margin: 14px 0 10px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.52);
+    background: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(16px) saturate(1.25);
+    -webkit-backdrop-filter: blur(16px) saturate(1.25);
     overflow: hidden;
 }
 
-.jewelry-panel summary {
+.jewelry-advanced.details-glass summary {
     cursor: pointer;
     padding: 14px 16px;
     font-weight: 600;
-    font-size: 15px;
+    font-size: 14px;
     list-style: none;
 }
 
-.jewelry-panel summary::-webkit-details-marker {
+.jewelry-advanced.details-glass summary::-webkit-details-marker {
     display: none;
 }
 
