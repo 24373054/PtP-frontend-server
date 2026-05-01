@@ -10,6 +10,9 @@ const sharp = require('sharp');
 const bcrypt = require('bcrypt');
 const session = require('express-session');
 const accounts = require('./lib/accounts');
+const community = require('./lib/community-store');
+const pointLedger = require('./lib/point-ledger');
+const moderationStore = require('./lib/moderation-store');
 const { sendVerificationCode } = require('./lib/mail');
 
 const app = express();
@@ -72,10 +75,19 @@ function getVersionPayload() {
         version: APP_PACKAGE.version,
         role: 'imageforge-web-bff',
         comfyuiUrl: COMFYUI_URL,
+        sqlite: true,
         /** 便于排查「Cannot POST /api/auth/...」：若此处无 authEmailOtp，说明跑的不是当前代码或未重启 */
         capabilities: {
             authEmailOtp: true,
-            authSendCodePost: '/api/auth/send-code'
+            authSendCodePost: '/api/auth/send-code',
+            communityTopics: true,
+            pointLedger: true,
+            moderationReport: true,
+            storageSqlite: true,
+            adminSettle: Boolean(
+                process.env.IMAGEFORGE_ADMIN_KEY &&
+                    String(process.env.IMAGEFORGE_ADMIN_KEY).length > 0
+            )
         },
         hint:
             'Web 仅请求本服务；ComfyUI 由服务端转发。鸿蒙端可对齐同一 REST/SSE 契约。'
@@ -246,6 +258,20 @@ function deductAccountUser(userId, operation) {
     const nextCredits = acc.credits - cost;
     const nextUsed = (acc.usedCredits || 0) + cost;
     accounts.updateUser(userId, { credits: nextCredits, usedCredits: nextUsed });
+    try {
+        const opLabel =
+            typeof operation === 'string' ? operation : JSON.stringify(operation);
+        pointLedger.appendEntry({
+            userId,
+            type: 'consume',
+            amount: -cost,
+            balanceAfter: nextCredits,
+            relatedId: opLabel.slice(0, 120),
+            remark: `Credits consumed (${opLabel.slice(0, 200)})`
+        });
+    } catch (err) {
+        console.error('[point-ledger consume]', err.message || err);
+    }
     return { success: true, credits: nextCredits, cost };
 }
 
@@ -451,7 +477,14 @@ app.get('/api/auth/me', (req, res) => {
         return res.status(401).json({ success: false, error: 'Session invalid' });
     }
     const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
-    res.json({ success: true, user: buildPublicUserFromAccount(acc, plan) });
+    const isAdmin = acc.role === 'admin';
+    const authPortal = req.session.authPortal || 'user';
+    res.json({
+        success: true,
+        user: buildPublicUserFromAccount(acc, plan),
+        isAdmin,
+        authPortal
+    });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -534,8 +567,14 @@ app.post('/api/auth/register', async (req, res) => {
         };
         accounts.addUser(user);
         req.session.userId = id;
+        req.session.authPortal = 'user';
         const plan = SUBSCRIPTION_PLANS.free;
-        res.json({ success: true, user: buildPublicUserFromAccount(user, plan) });
+        res.json({
+            success: true,
+            user: buildPublicUserFromAccount(user, plan),
+            isAdmin: false,
+            authPortal: 'user'
+        });
     } catch (e) {
         console.error('[register]', e);
         res.status(500).json({ error: e.message || 'Registration failed' });
@@ -544,7 +583,7 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login-password', async (req, res) => {
     try {
-        const { email, password } = req.body || {};
+        const { email, password, intent } = req.body || {};
         const em = accounts.normalizeEmail(email);
         const acc = accounts.findByEmail(em);
         if (!acc || !acc.passwordHash) {
@@ -554,9 +593,25 @@ app.post('/api/auth/login-password', async (req, res) => {
         if (!ok) {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
+        const portal = String(intent || 'user').toLowerCase();
+        if (portal === 'admin') {
+            if (acc.role !== 'admin') {
+                return res
+                    .status(403)
+                    .json({ error: 'Administrator access denied' });
+            }
+            req.session.authPortal = 'admin';
+        } else {
+            req.session.authPortal = 'user';
+        }
         req.session.userId = acc.id;
         const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
-        res.json({ success: true, user: buildPublicUserFromAccount(acc, plan) });
+        res.json({
+            success: true,
+            user: buildPublicUserFromAccount(acc, plan),
+            isAdmin: acc.role === 'admin',
+            authPortal: req.session.authPortal
+        });
     } catch (e) {
         console.error('[login-password]', e);
         res.status(500).json({ error: e.message || 'Login failed' });
@@ -565,7 +620,7 @@ app.post('/api/auth/login-password', async (req, res) => {
 
 app.post('/api/auth/login-code', async (req, res) => {
     try {
-        const { email, code } = req.body || {};
+        const { email, code, intent } = req.body || {};
         const em = accounts.normalizeEmail(email);
         const acc = accounts.findByEmail(em);
         if (!acc) {
@@ -574,9 +629,25 @@ app.post('/api/auth/login-code', async (req, res) => {
         if (!verifyOtp(em, 'login', code)) {
             return res.status(401).json({ error: 'Invalid or expired verification code' });
         }
+        const portal = String(intent || 'user').toLowerCase();
+        if (portal === 'admin') {
+            if (acc.role !== 'admin') {
+                return res
+                    .status(403)
+                    .json({ error: 'Administrator access denied' });
+            }
+            req.session.authPortal = 'admin';
+        } else {
+            req.session.authPortal = 'user';
+        }
         req.session.userId = acc.id;
         const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
-        res.json({ success: true, user: buildPublicUserFromAccount(acc, plan) });
+        res.json({
+            success: true,
+            user: buildPublicUserFromAccount(acc, plan),
+            isAdmin: acc.role === 'admin',
+            authPortal: req.session.authPortal
+        });
     } catch (e) {
         console.error('[login-code]', e);
         res.status(500).json({ error: e.message || 'Login failed' });
@@ -601,9 +672,15 @@ app.post('/api/auth/reset-password', async (req, res) => {
         const passwordHash = await bcrypt.hash(pw, 10);
         accounts.updateUser(acc.id, { passwordHash });
         req.session.userId = acc.id;
+        req.session.authPortal = 'user';
         const next = accounts.findById(acc.id);
         const plan = SUBSCRIPTION_PLANS[next.plan] || SUBSCRIPTION_PLANS.free;
-        res.json({ success: true, user: buildPublicUserFromAccount(next, plan) });
+        res.json({
+            success: true,
+            user: buildPublicUserFromAccount(next, plan),
+            isAdmin: next.role === 'admin',
+            authPortal: 'user'
+        });
     } catch (e) {
         console.error('[reset-password]', e);
         res.status(500).json({ error: e.message || 'Reset failed' });
@@ -1898,6 +1975,794 @@ app.get('/api/edit-variants', (req, res) => {
     });
 });
 
+// --- 话题挑战 / 作品社区（Phase 2：SQLite data/imageforge.sqlite，首次启动可从 community.json 等迁移；契约见 docs/ImageForge_API_Document_Template.md）---
+
+function publicBaseUrl(req) {
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http')
+        .split(',')[0]
+        .trim();
+    const host = req.get('host') || `localhost:${PORT}`;
+    return `${proto}://${host}`;
+}
+
+function resolveLocalAssetPath(rel) {
+    if (typeof rel !== 'string' || !rel.startsWith('/')) return null;
+    if (rel.includes('..')) return null;
+    if (rel.startsWith('/outputs/')) {
+        const fn = path.basename(rel);
+        const full = path.join(OUTPUT_DIR, fn);
+        if (fs.existsSync(full)) return { full, rel: `/outputs/${fn}` };
+    }
+    if (rel.startsWith('/uploads/')) {
+        const fn = path.basename(rel);
+        const full = path.join(UPLOAD_DIR, fn);
+        if (fs.existsSync(full)) return { full, rel: `/uploads/${fn}` };
+    }
+    return null;
+}
+
+function workflowFromHistoryProof(proof) {
+    if (!proof || typeof proof !== 'object') return null;
+    if (proof.mode === 'generate') return 't2i_generate';
+    if (proof.workflowTemplate) return String(proof.workflowTemplate);
+    if (proof.params && proof.params.workflowTemplate) {
+        return String(proof.params.workflowTemplate);
+    }
+    return null;
+}
+
+function requireSessionAccount(req, res) {
+    if (!req.session || !req.session.userId) {
+        res.status(401).json({ code: 40101, message: 'Unauthorized', data: null });
+        return null;
+    }
+    const acc = accounts.findById(req.session.userId);
+    if (!acc) {
+        res.status(401).json({ code: 40101, message: 'Unauthorized', data: null });
+        return null;
+    }
+    return acc;
+}
+
+function isAdminRequest(req) {
+    const key = process.env.IMAGEFORGE_ADMIN_KEY;
+    if (key && String(key).length > 0 && req.get('x-admin-key') === String(key)) {
+        return true;
+    }
+    if (
+        req.session &&
+        req.session.userId &&
+        req.session.authPortal === 'admin'
+    ) {
+        const acc = accounts.findById(req.session.userId);
+        if (acc && acc.role === 'admin') return true;
+    }
+    return false;
+}
+
+function requireAdmin(req, res) {
+    if (!isAdminRequest(req)) {
+        res.status(403).json({ code: 40301, message: 'Forbidden', data: null });
+        return false;
+    }
+    return true;
+}
+
+/** 活动奖励：增加 credits 并记 point_ledger（amount 正整数） */
+function grantRewardCredits(userId, amountInt, opts = {}) {
+    const acc = accounts.findById(userId);
+    if (!acc || !Number.isFinite(amountInt) || amountInt <= 0) {
+        return { success: false, error: 'bad_request' };
+    }
+    const next = (acc.credits || 0) + Math.floor(amountInt);
+    accounts.updateUser(userId, { credits: next });
+    pointLedger.appendEntry({
+        userId,
+        type: 'reward',
+        amount: Math.floor(amountInt),
+        balanceAfter: next,
+        relatedId: opts.relatedId || null,
+        remark: opts.remark || 'Topic challenge reward'
+    });
+    return { success: true, credits: next };
+}
+
+/** 与 POST /api/admin/topics/:topicId/settle 共用；供定时自动结算调用。 */
+function executeTopicSettlement(topicId) {
+    const built = community.buildSettlementPayouts(topicId);
+    if (built.error) {
+        return { ok: false, error: built.error };
+    }
+    for (const row of built.payouts) {
+        if (!accounts.findById(row.userId)) {
+            return { ok: false, error: 'unknown_user', row };
+        }
+    }
+    const applied = [];
+    for (const row of built.payouts) {
+        const g = grantRewardCredits(row.userId, row.points, {
+            relatedId: topicId,
+            remark: `Challenge reward · rank ${row.rank} · post ${row.postId}`
+        });
+        applied.push({
+            ...row,
+            ok: g.success,
+            creditsAfter: g.success ? g.credits : null,
+            error: g.success ? null : g.error || null
+        });
+        if (!g.success) {
+            return {
+                ok: false,
+                error: 'grant_failed',
+                topicId,
+                applied
+            };
+        }
+    }
+    community.markTopicSettled(topicId, {
+        payouts: applied,
+        settledAt: new Date().toISOString()
+    });
+    return { ok: true, topicId, payouts: applied };
+}
+
+function serializeCommunityPost(req, p, viewerUserId, { includePrompt = false } = {}) {
+    const base = publicBaseUrl(req);
+    const likeUserIds = p.likeUserIds || [];
+    const favoriteUserIds = p.favoriteUserIds || [];
+    const nickname = p.user && p.user.nickname;
+    const showPrompt =
+        includePrompt &&
+        (p.publicPrompt || (viewerUserId && viewerUserId === p.userId));
+    return {
+        id: p.id,
+        topicId: p.topicId,
+        user: {
+            id: p.userId,
+            nickname,
+            avatarUrl: (p.user && p.user.avatarUrl) || null
+        },
+        imageUrl: `${base}${p.imageRel}`,
+        caption: p.caption,
+        taskType: p.taskType,
+        workflowTemplate: p.workflowTemplate,
+        promptSummary: showPrompt ? p.promptSummary : null,
+        aiLabel: p.aiLabel !== false,
+        status: p.status,
+        likeCount: likeUserIds.length,
+        commentCount: (p.comments && p.comments.length) || 0,
+        favoriteCount: favoriteUserIds.length,
+        score: community.computeScore(p),
+        rank: null,
+        liked: viewerUserId ? likeUserIds.includes(viewerUserId) : false,
+        favorited: viewerUserId ? favoriteUserIds.includes(viewerUserId) : false,
+        createdAt: p.createdAt
+    };
+}
+
+function serializeAdminTopic(req, t) {
+    if (!t) return null;
+    const base = publicBaseUrl(req);
+    const coverUrl = t.coverUrl
+        ? String(t.coverUrl).startsWith('http')
+            ? t.coverUrl
+            : `${base}${t.coverUrl}`
+        : '';
+    return { ...t, coverUrl };
+}
+
+function serializeAdminPostBrief(req, p) {
+    const base = publicBaseUrl(req);
+    return {
+        id: p.id,
+        topicId: p.topicId,
+        userId: p.userId,
+        user: p.user,
+        imageUrl: `${base}${p.imageRel}`,
+        thumbUrl: p.thumbRel ? `${base}${p.thumbRel}` : `${base}${p.imageRel}`,
+        caption: p.caption,
+        status: p.status,
+        taskType: p.taskType,
+        promptSummary: p.promptSummary,
+        publicPrompt: p.publicPrompt,
+        commentCount: (p.comments && p.comments.length) || 0,
+        createdAt: p.createdAt
+    };
+}
+
+/** 管理端全文：含评论、prompt、historyProof、点赞/收藏用户 id */
+function serializeAdminPost(req, p) {
+    const base = publicBaseUrl(req);
+    const likeUserIds = p.likeUserIds || [];
+    const favoriteUserIds = p.favoriteUserIds || [];
+    return {
+        id: p.id,
+        topicId: p.topicId,
+        userId: p.userId,
+        user: p.user,
+        imageRel: p.imageRel,
+        thumbRel: p.thumbRel,
+        imageUrl: `${base}${p.imageRel}`,
+        thumbUrl: p.thumbRel ? `${base}${p.thumbRel}` : `${base}${p.imageRel}`,
+        caption: p.caption,
+        taskType: p.taskType,
+        workflowTemplate: p.workflowTemplate,
+        promptSummary: p.promptSummary,
+        publicPrompt: p.publicPrompt,
+        aiLabel: p.aiLabel !== false,
+        status: p.status,
+        likeUserIds: [...likeUserIds],
+        favoriteUserIds: [...favoriteUserIds],
+        likeCount: likeUserIds.length,
+        favoriteCount: favoriteUserIds.length,
+        commentCount: (p.comments && p.comments.length) || 0,
+        comments: p.comments || [],
+        historyProof: p.historyProof,
+        score: community.computeScore(p),
+        createdAt: p.createdAt
+    };
+}
+
+app.get('/api/topics', (req, res) => {
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 20, 50);
+    const { list, ...rest } = community.listTopics({ status, page, pageSize });
+    const base = publicBaseUrl(req);
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            list: list.map((t) => ({
+                id: t.id,
+                title: t.title,
+                tag: t.tag,
+                coverUrl: t.coverUrl
+                    ? t.coverUrl.startsWith('http')
+                        ? t.coverUrl
+                        : `${base}${t.coverUrl}`
+                    : '',
+                status: t.status,
+                startAt: t.startAt,
+                endAt: t.endAt,
+                postCount: t.postCount,
+                rewardPool: t.rewardPool,
+                settlementStatus: t.settlementStatus || 'none'
+            })),
+            ...rest
+        }
+    });
+});
+
+app.get('/api/topics/:topicId', (req, res) => {
+    const t = community.getTopic(req.params.topicId);
+    if (!t) {
+        return res
+            .status(404)
+            .json({ code: 40401, message: 'Topic not found', data: null });
+    }
+    const auth = resolveAuth(req);
+    const viewerId = auth && auth.kind === 'account' ? auth.userId : null;
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            ...t,
+            mySubmitted: viewerId
+                ? community.userHasPostInTopic(viewerId, t.id)
+                : false
+        }
+    });
+});
+
+app.post('/api/topics/:topicId/posts', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const topic = community.getTopic(req.params.topicId);
+    if (!topic) {
+        return res
+            .status(404)
+            .json({ code: 40401, message: 'Topic not found', data: null });
+    }
+    if (topic.status !== 'active') {
+        return res.status(400).json({
+            code: 40001,
+            message: 'Topic not active',
+            data: null
+        });
+    }
+    const now = Date.now();
+    if (
+        new Date(topic.startAt).getTime() > now ||
+        new Date(topic.endAt).getTime() < now
+    ) {
+        return res.status(400).json({
+            code: 40002,
+            message: 'Topic not in time window',
+            data: null
+        });
+    }
+    if (community.userHasPostInTopic(acc.id, topic.id)) {
+        return res.status(409).json({
+            code: 40901,
+            message: 'Already submitted to this topic',
+            data: null
+        });
+    }
+    const { caption = '', publicPrompt = false, historyProof } = req.body || {};
+    if (!historyProof || typeof historyProof !== 'object') {
+        return res.status(400).json({
+            code: 40003,
+            message: 'historyProof required',
+            data: null
+        });
+    }
+    const wf = workflowFromHistoryProof(historyProof);
+    if (!wf || !topic.allowedTaskTypes.includes(wf)) {
+        return res.status(400).json({
+            code: 40004,
+            message: 'Workflow not allowed for this topic',
+            data: null
+        });
+    }
+    const outRel = historyProof.outRel || historyProof.imageRel;
+    const resolved = resolveLocalAssetPath(outRel);
+    if (!resolved) {
+        return res.status(400).json({
+            code: 40005,
+            message: 'Output file not found on server',
+            data: null
+        });
+    }
+    let thumbRel = resolved.rel;
+    if (historyProof.thumbRel) {
+        const tr = resolveLocalAssetPath(historyProof.thumbRel);
+        if (tr) thumbRel = tr.rel;
+    }
+    const taskType = String(historyProof.taskType || wf).slice(0, 64);
+    const promptSummary = String(
+        historyProof.prompt || historyProof.promptSummary || ''
+    ).slice(0, 400);
+
+    const post = community.createPost({
+        topicId: topic.id,
+        userId: acc.id,
+        nickname: acc.username,
+        avatarUrl: null,
+        caption: String(caption || '').slice(0, 500),
+        publicPrompt: !!publicPrompt,
+        workflowTemplate: wf,
+        taskType,
+        promptSummary,
+        imageRel: resolved.rel,
+        thumbRel,
+        historyProof: {
+            historyId: historyProof.historyId,
+            at: historyProof.at,
+            mode: historyProof.mode
+        }
+    });
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: { id: post.id, status: post.status }
+    });
+});
+
+app.get('/api/topics/:topicId/posts', (req, res) => {
+    const topic = community.getTopic(req.params.topicId);
+    if (!topic) {
+        return res
+            .status(404)
+            .json({ code: 40401, message: 'Topic not found', data: null });
+    }
+    const sort =
+        req.query.sort === 'hot' || req.query.sort === 'rank'
+            ? req.query.sort
+            : 'latest';
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 20, 50);
+    const { list, ...rest } = community.listPostsForTopic(topic.id, {
+        sort,
+        page,
+        pageSize
+    });
+    const auth = resolveAuth(req);
+    const viewerId = auth && auth.kind === 'account' ? auth.userId : null;
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            list: list.map(({ post: p, rank }) => {
+                const row = serializeCommunityPost(req, p, viewerId, {
+                    includePrompt: false
+                });
+                row.rank = rank;
+                return row;
+            }),
+            ...rest
+        }
+    });
+});
+
+app.get('/api/topics/:topicId/ranking', (req, res) => {
+    const topic = community.getTopic(req.params.topicId);
+    if (!topic) {
+        return res
+            .status(404)
+            .json({ code: 40401, message: 'Topic not found', data: null });
+    }
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 50, 100);
+    const { list, ...rest } = community.rankingForTopic(topic.id, {
+        page,
+        pageSize
+    });
+    const auth = resolveAuth(req);
+    const viewerId = auth && auth.kind === 'account' ? auth.userId : null;
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            list: list.map(({ post: p, rank, score }) => {
+                const row = serializeCommunityPost(req, p, viewerId);
+                row.rank = rank;
+                row.score = score;
+                return row;
+            }),
+            ...rest
+        }
+    });
+});
+
+app.get('/api/posts/:postId', (req, res) => {
+    const p = community.findPost(req.params.postId);
+    if (!p || p.status !== 'published') {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    const auth = resolveAuth(req);
+    const viewerId = auth && auth.kind === 'account' ? auth.userId : null;
+    const ranked = community.rankingForTopic(p.topicId, {
+        page: 1,
+        pageSize: 5000
+    });
+    const rankMap = new Map(ranked.list.map((x) => [x.post.id, x.rank]));
+    const row = serializeCommunityPost(req, p, viewerId, {
+        includePrompt: true
+    });
+    row.rank = rankMap.get(p.id) || null;
+    row.shareCount = 0;
+    res.json({ code: 0, message: 'ok', data: row });
+});
+
+app.post('/api/posts/:postId/like', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const result = community.setPostLike(req.params.postId, acc.id, true);
+    if (!result) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({ code: 0, message: 'ok', data: result });
+});
+
+app.delete('/api/posts/:postId/like', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const result = community.setPostLike(req.params.postId, acc.id, false);
+    if (!result) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({ code: 0, message: 'ok', data: result });
+});
+
+app.post('/api/posts/:postId/comments', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const content = (req.body && req.body.content) || '';
+    const c = community.addComment(req.params.postId, {
+        userId: acc.id,
+        nickname: acc.username,
+        content
+    });
+    if (c === null) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    if (c.error === 'empty') {
+        return res
+            .status(400)
+            .json({ code: 40006, message: 'Empty comment', data: null });
+    }
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            id: c.id,
+            postId: req.params.postId,
+            content: c.content,
+            status: 'published',
+            createdAt: c.createdAt
+        }
+    });
+});
+
+app.get('/api/posts/:postId/comments', (req, res) => {
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 20, 50);
+    const result = community.listComments(req.params.postId, {
+        page,
+        pageSize
+    });
+    if (!result) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            ...result,
+            list: result.list.map((c) => ({
+                id: c.id,
+                user: c.user,
+                content: c.content,
+                createdAt: c.createdAt
+            }))
+        }
+    });
+});
+
+app.post('/api/posts/:postId/favorite', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const result = community.setPostFavorite(req.params.postId, acc.id, true);
+    if (!result) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({ code: 0, message: 'ok', data: result });
+});
+
+app.delete('/api/posts/:postId/favorite', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const result = community.setPostFavorite(req.params.postId, acc.id, false);
+    if (!result) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({ code: 0, message: 'ok', data: result });
+});
+
+app.post('/api/posts/:postId/report', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const p = community.findPost(req.params.postId);
+    if (!p || p.status !== 'published') {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    const { reason = 'other', note = '' } = req.body || {};
+    const r = moderationStore.addReport({
+        postId: p.id,
+        topicId: p.topicId,
+        reporterUserId: acc.id,
+        reason,
+        note
+    });
+    if (r.error === 'duplicate') {
+        return res.status(409).json({
+            code: 40902,
+            message: 'Already reported this post',
+            data: null
+        });
+    }
+    res.json({ code: 0, message: 'ok', data: { id: r.report.id } });
+});
+
+app.get('/api/auth/point-ledger', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 30, 100);
+    const data = pointLedger.listForUser(acc.id, { page, pageSize });
+    res.json({ code: 0, message: 'ok', data });
+});
+
+app.get('/api/admin/moderation', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const status = req.query.status ? String(req.query.status) : 'open';
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 50, 200);
+    const data = moderationStore.listReports({ status, page, pageSize });
+    res.json({ code: 0, message: 'ok', data });
+});
+
+app.post('/api/admin/moderation/:reportId/resolve', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const { resolution = 'reviewed', adminNote = '' } = req.body || {};
+    const out = moderationStore.resolveReport(req.params.reportId, {
+        resolution,
+        adminNote
+    });
+    if (!out) {
+        return res
+            .status(404)
+            .json({ code: 40403, message: 'Report not found', data: null });
+    }
+    if (out.error === 'not_open') {
+        return res.status(400).json({
+            code: 40012,
+            message: 'Report already resolved',
+            data: null
+        });
+    }
+    res.json({ code: 0, message: 'ok', data: { id: out.report.id, status: out.report.status } });
+});
+
+app.post('/api/admin/posts/:postId/hide', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const p = community.setPostHidden(req.params.postId, true);
+    if (!p) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: { id: p.id, status: p.status }
+    });
+});
+
+app.post('/api/admin/topics/:topicId/settle', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const topicId = req.params.topicId;
+    const out = executeTopicSettlement(topicId);
+    if (!out.ok) {
+        if (out.error === 'not_found') {
+            return res
+                .status(404)
+                .json({ code: 40401, message: 'Topic not found', data: null });
+        }
+        if (out.error === 'already_settled') {
+            return res.status(400).json({
+                code: 40010,
+                message: 'Topic already settled',
+                data: null
+            });
+        }
+        if (out.error === 'topic_not_ended') {
+            return res.status(400).json({
+                code: 40011,
+                message: 'Topic must be ended before settlement',
+                data: null
+            });
+        }
+        if (out.error === 'unknown_user') {
+            return res.status(400).json({
+                code: 40020,
+                message: `Unknown user in payout: ${out.row.userId}`,
+                data: { row: out.row }
+            });
+        }
+        if (out.error === 'grant_failed') {
+            return res.status(500).json({
+                code: 50010,
+                message: 'Settlement aborted after partial credit failure',
+                data: { topicId, payouts: out.applied }
+            });
+        }
+        return res.status(500).json({
+            code: 50011,
+            message: String(out.error),
+            data: out
+        });
+    }
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: { topicId, payouts: out.payouts }
+    });
+});
+
+app.get('/api/admin/summary', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    community.syncTopicLifecycle();
+    const data = community.getAdminSummary();
+    res.json({ code: 0, message: 'ok', data });
+});
+
+app.get('/api/admin/users', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const data = accounts.load();
+    const list = (data.users || []).map((u) => ({
+        id: u.id,
+        email: u.email,
+        username: u.username,
+        plan: u.plan,
+        role: u.role || null,
+        credits: u.credits,
+        createdAt: u.createdAt
+    }));
+    res.json({ code: 0, message: 'ok', data: { list } });
+});
+
+app.get('/api/admin/topics', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    community.syncTopicLifecycle();
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 100, 200);
+    const { list, ...rest } = community.listTopics({ status, page, pageSize });
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            list: list.map((t) => serializeAdminTopic(req, t)),
+            ...rest
+        }
+    });
+});
+
+app.get('/api/admin/topics/:topicId/posts', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const t = community.getTopic(req.params.topicId);
+    if (!t) {
+        return res
+            .status(404)
+            .json({ code: 40401, message: 'Topic not found', data: null });
+    }
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 50, 200);
+    const { list, ...rest } = community.listPostsForTopicAdmin(t.id, {
+        page,
+        pageSize
+    });
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            list: list.map((p) => serializeAdminPostBrief(req, p)),
+            ...rest
+        }
+    });
+});
+
+app.get('/api/admin/posts/:postId', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const p = community.findPost(req.params.postId);
+    if (!p) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: serializeAdminPost(req, p)
+    });
+});
+
+app.get('/api/admin/ledger', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 50, 200);
+    const data = pointLedger.listAll({ page, pageSize });
+    res.json({ code: 0, message: 'ok', data });
+});
+
 // 静态与产物目录放在 API 之后，避免意外覆盖 /api 等路由
 app.use(express.static('public'));
 app.use('/workflows', express.static(path.join(__dirname, 'workflows')));
@@ -1918,6 +2783,25 @@ function lanIPv4Addresses() {
     return out;
 }
 
+function runAutoSettlementPass() {
+    const v = process.env.IMAGEFORGE_AUTO_SETTLE;
+    if (v !== '1' && v !== 'true') return;
+    try {
+        community.syncTopicLifecycle();
+        const ids = community.listTopicsAwaitingSettlement();
+        for (const topicId of ids) {
+            const out = executeTopicSettlement(topicId);
+            if (out.ok) {
+                console.log('[auto-settle] settled', topicId);
+            } else {
+                console.warn('[auto-settle] skip', topicId, out.error);
+            }
+        }
+    } catch (e) {
+        console.error('[auto-settle]', e);
+    }
+}
+
 app.listen(PORT, '0.0.0.0', () => {
     writePublicVersionInfoFile();
     console.log(`\n=== P2P Image Editor Server ===`);
@@ -1934,5 +2818,18 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(
         `Auth: POST /api/auth/send-code | register | login-password | login-code | reset-password | GET /api/auth/me`
     );
+    console.log(
+        `Community: GET /api/topics | /api/topics/:id | posts | ranking | GET/POST /api/posts/...`
+    );
+    if (
+        process.env.IMAGEFORGE_AUTO_SETTLE === '1' ||
+        process.env.IMAGEFORGE_AUTO_SETTLE === 'true'
+    ) {
+        console.log(
+            'Auto-settle: IMAGEFORGE_AUTO_SETTLE enabled (hourly + 15s first run)'
+        );
+        setInterval(runAutoSettlementPass, 60 * 60 * 1000);
+        setTimeout(runAutoSettlementPass, 15000);
+    }
     console.log(`================================\n`);
 });

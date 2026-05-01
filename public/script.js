@@ -63,6 +63,14 @@ const regenerateBtn = document.getElementById('regenerateBtn');
 const historyList = document.getElementById('historyList');
 const historyEmpty = document.getElementById('historyEmpty');
 const forgeNav = document.getElementById('forgeNav');
+const navBtnAdmin = document.getElementById('navAdmin');
+const btnAdminRefresh = document.getElementById('btnAdminRefresh');
+/** 登录表单意图：user | admin */
+let authPortalIntent = 'user';
+let currentAuthPortal = 'user';
+let sessionIsAdmin = false;
+/** 管理端：userId -> 账号摘要（不含密码） */
+const adminUserMap = new Map();
 const historyModal = document.getElementById('historyModal');
 const historyModalMeta = document.getElementById('historyModalMeta');
 const historyModalBefore = document.getElementById('historyModalBefore');
@@ -387,6 +395,13 @@ let lastResultSummary = {};
 let forgeUserCancelled = false;
 /** 批量队列（顺序调用 /api/edit-stream） */
 let batchQueue = [];
+/** 最近一次成功任务（用于结果页「发布到话题」） */
+let lastCompletedHistoryEntry = null;
+/** 话题详情页当前 topicId */
+let communityTopicId = null;
+let communityPostSort = 'latest';
+let communityPublishTargetItem = null;
+let communityViewingPostId = null;
 
 /** 与 server.js normalizeEditTemplate 对齐 */
 const EDIT_WORKFLOW_TEMPLATE = {
@@ -595,7 +610,33 @@ const i18n = {
         'nav.home': 'Home',
         'nav.editor': 'Create',
         'nav.history': 'History',
+        'nav.topics': 'Challenges',
+        'nav.admin': 'Admin',
         'nav.settings': 'Settings',
+        'auth.portalUser': 'User sign-in',
+        'auth.portalAdmin': 'Admin sign-in',
+        'admin.title': 'Admin console',
+        'admin.hint':
+            'Use “Admin sign-in” with an administrator account, or use API clients with X-Admin-Key.',
+        'admin.refresh': 'Refresh',
+        'admin.reports': 'Open reports',
+        'admin.settle': 'Topics pending settlement',
+        'admin.resolve': 'Resolve',
+        'admin.runSettle': 'Settle',
+        'admin.settleOk': 'Settled',
+        'admin.loadFailed': 'Failed to load admin data',
+        'admin.topicsTitle': 'Topics & posts (including hidden)',
+        'admin.topicsHint':
+            'Full descriptions, rules, and posts in all states — admin only.',
+        'admin.ledgerTitle': 'Credit ledger (site-wide)',
+        'admin.postInspectTitle': 'Post detail (admin)',
+        'admin.closeInspect': 'Close',
+        'admin.loadPosts': 'Load posts',
+        'admin.viewFull': 'Full content',
+        'admin.viewReportedPost': 'View post',
+        'admin.commentsHeading': 'Comments',
+        'admin.promptSummary': 'Prompt summary',
+        'admin.historyProof': 'historyProof (JSON)',
         'home.card.style.title': 'Stylized edit',
         'home.card.style.desc': 'Natural language + Flux2 workflow',
         'home.card.upscale.title': 'HD enhance',
@@ -663,6 +704,39 @@ const i18n = {
         'history.detailTitle': 'Task detail',
         'history.openEditor': 'Open in editor',
         'history.close': 'Close',
+        'community.title': 'Topic challenges',
+        'community.subtitle':
+            'Limited-time themes · platform-made entries only · AI labels on public work',
+        'community.loading': 'Loading…',
+        'community.back': 'Back',
+        'community.sort.latest': 'Latest',
+        'community.sort.hot': 'Hot',
+        'community.sort.rank': 'Rank',
+        'community.leaderboard': 'Leaderboard',
+        'community.publish': 'Publish to topic',
+        'community.publishTitle': 'Publish to topic',
+        'community.publishHint':
+            'Only outputs still on this server can be submitted. One entry per topic per account.',
+        'community.pickTopic': 'Topic',
+        'community.caption': 'Caption',
+        'community.captionPh': 'Short description of your work',
+        'community.publicPrompt': 'Show prompt summary publicly',
+        'community.submit': 'Submit',
+        'community.cancel': 'Cancel',
+        'community.aiBadge': 'AI',
+        'community.comments': 'Comments',
+        'community.openDetail': 'Detail',
+        'community.postDetail': 'Work detail',
+        'community.yourComment': 'Your comment',
+        'community.commentPh': 'Say something constructive…',
+        'community.sendComment': 'Send',
+        'community.needLogin': 'Please sign in to continue.',
+        'community.submitted': 'Submitted.',
+        'community.alreadySubmitted': 'You already submitted to this topic.',
+        'community.workflowRejected': 'This workflow is not allowed for the selected topic.',
+        'community.fileMissing': 'Image not found on server (re-run task on this server).',
+        'community.sortLabel': 'Sort',
+        'community.fav': 'Favorite',
         'settings.healthTitle': 'Connectivity',
         'settings.healthDesc': 'Checks this web service and ComfyUI (server-side).',
         'settings.refreshHealth': 'Run health check',
@@ -673,6 +747,24 @@ const i18n = {
         'settings.demoBody': 'Use History to replay past successful outputs when GPU is offline.',
         'settings.dataTitle': 'Local data',
         'settings.clearHistory': 'Clear all history',
+        'settings.ledgerTitle': 'Credit ledger',
+        'settings.ledgerHint':
+            'Reward credits from settled challenges (login required). Generation debits appear in task history.',
+        'settings.refreshLedger': 'Refresh ledger',
+        'settings.ledgerLogin': 'Sign in to view your ledger.',
+        'home.card.topics.title': 'Topic challenges',
+        'home.card.topics.desc': 'Limited-time themes, leaderboard, reward credits',
+        'moderation.reportTitle': 'Report this work',
+        'moderation.notePh': 'Optional details (max 2000 characters)',
+        'moderation.submit': 'Submit report',
+        'moderation.done': 'Report received. Thank you.',
+        'moderation.opt.spam': 'Spam / low quality',
+        'moderation.opt.copyright': 'Copyright / portrait rights',
+        'moderation.opt.illegal': 'Illegal content',
+        'moderation.opt.harassment': 'Harassment / hate',
+        'moderation.opt.cheating': 'Cheating / non-platform work',
+        'moderation.opt.other': 'Other',
+        'moderation.duplicate': 'You already reported this work.',
         'editor.mode.style':
             '当前：风格化 · ComfyUI ~1MP、4 步、nearest 缩放 · 提交模板 img2img_style',
         'editor.mode.upscale':
@@ -781,7 +873,31 @@ const i18n = {
         'nav.home': '首页',
         'nav.editor': '创作',
         'nav.history': '历史',
+        'nav.topics': '挑战',
+        'nav.admin': '工作台',
         'nav.settings': '设置',
+        'auth.portalUser': '用户入口',
+        'auth.portalAdmin': '管理员入口',
+        'admin.title': '管理工作台',
+        'admin.hint': '需使用「管理员入口」登录；脚本或自动化可带 X-Admin-Key 调用接口。',
+        'admin.refresh': '刷新数据',
+        'admin.reports': '待处理举报',
+        'admin.settle': '待结算话题',
+        'admin.resolve': '结案',
+        'admin.runSettle': '执行结算',
+        'admin.settleOk': '已结算',
+        'admin.loadFailed': '加载管理数据失败',
+        'admin.topicsTitle': '话题与作品（含隐藏）',
+        'admin.topicsHint': '完整描述、规则与全部状态的作品；仅管理员可见。',
+        'admin.ledgerTitle': '积分流水（全站）',
+        'admin.postInspectTitle': '作品详情（管理员）',
+        'admin.closeInspect': '关闭',
+        'admin.loadPosts': '加载作品列表',
+        'admin.viewFull': '查看全文',
+        'admin.viewReportedPost': '查看被举报作品',
+        'admin.commentsHeading': '评论',
+        'admin.promptSummary': '提示词摘要',
+        'admin.historyProof': 'historyProof（JSON）',
         'home.card.style.title': '风格化修图',
         'home.card.style.desc': '自然语言编辑 + Flux2 工作流',
         'home.card.upscale.title': '高清增强',
@@ -848,6 +964,38 @@ const i18n = {
         'history.detailTitle': '任务详情',
         'history.openEditor': '在创作中打开',
         'history.close': '关闭',
+        'community.title': '话题挑战',
+        'community.subtitle': '限时活动 · 仅本平台生成作品 · 公开展示含 AI 标识',
+        'community.loading': '加载中…',
+        'community.back': '返回',
+        'community.sort.latest': '最新',
+        'community.sort.hot': '热度',
+        'community.sort.rank': '排名',
+        'community.leaderboard': '排行榜',
+        'community.publish': '发布到话题',
+        'community.publishTitle': '发布到话题',
+        'community.publishHint':
+            '仅当输出仍保存在本服务器上时可投稿；每个话题每账号限一件作品。',
+        'community.pickTopic': '选择话题',
+        'community.caption': '作品说明',
+        'community.captionPh': '一句话介绍你的作品',
+        'community.publicPrompt': '公开提示词摘要',
+        'community.submit': '投稿',
+        'community.cancel': '取消',
+        'community.aiBadge': 'AI',
+        'community.comments': '评论',
+        'community.openDetail': '详情',
+        'community.postDetail': '作品详情',
+        'community.yourComment': '你的评论',
+        'community.commentPh': '友善、具体的反馈更受欢迎…',
+        'community.sendComment': '发送',
+        'community.needLogin': '请先登录后再操作。',
+        'community.submitted': '投稿成功。',
+        'community.alreadySubmitted': '您已在本话题投过稿。',
+        'community.workflowRejected': '当前作品工作流不符合该话题要求。',
+        'community.fileMissing': '服务器上找不到该输出文件（请在本机重新生成后再投）。',
+        'community.sortLabel': '排序',
+        'community.fav': '收藏',
         'settings.healthTitle': '连通性',
         'settings.healthDesc': '检测本 Web 服务与 ComfyUI（服务端转发）。',
         'settings.refreshHealth': '执行健康检查',
@@ -858,6 +1006,23 @@ const i18n = {
         'settings.demoBody': 'GPU 不可用时，用历史记录回看已成功输出。',
         'settings.dataTitle': '本地数据',
         'settings.clearHistory': '清空全部历史',
+        'settings.ledgerTitle': '积分流水',
+        'settings.ledgerHint': '含活动结算后的奖励入账（需登录）。生成消耗见历史任务。',
+        'settings.refreshLedger': '刷新流水',
+        'settings.ledgerLogin': '登录后可查看积分流水。',
+        'home.card.topics.title': '话题挑战',
+        'home.card.topics.desc': '限时主题、榜单与奖励积分',
+        'moderation.reportTitle': '举报该作品',
+        'moderation.notePh': '可选补充说明（最多约 2000 字）',
+        'moderation.submit': '提交举报',
+        'moderation.done': '已收到举报，感谢反馈。',
+        'moderation.opt.spam': '垃圾 / 低质',
+        'moderation.opt.copyright': '版权 / 肖像权',
+        'moderation.opt.illegal': '违法违规',
+        'moderation.opt.harassment': '骚扰 / 仇恨',
+        'moderation.opt.cheating': '作弊 / 非本平台作品',
+        'moderation.opt.other': '其他',
+        'moderation.duplicate': '您已举报过该作品。',
         'editor.mode.style':
             '当前：风格化 · ComfyUI 约 1MP、4 步、nearest 缩放 · 提交模板 img2img_style',
         'editor.mode.upscale':
@@ -909,7 +1074,10 @@ function showForgePage(page) {
         home: 'pageHome',
         editor: 'pageEditor',
         history: 'pageHistory',
-        settings: 'pageSettings'
+        settings: 'pageSettings',
+        topics: 'pageTopics',
+        topicDetail: 'pageTopicDetail',
+        admin: 'pageAdmin'
     };
     document.querySelectorAll('.forge-page').forEach((el) => el.classList.add('hidden'));
     const id = map[page];
@@ -919,11 +1087,19 @@ function showForgePage(page) {
     }
     if (forgeNav) {
         forgeNav.querySelectorAll('button').forEach((b) => {
-            b.classList.toggle('active', b.dataset.page === page);
+            const active =
+                b.dataset.page === page ||
+                (page === 'topicDetail' && b.dataset.page === 'topics');
+            b.classList.toggle('active', active);
         });
     }
     if (page === 'history') renderHistoryList();
     if (page === 'settings') loadSettingsPanel();
+    if (page === 'topics') loadTopicsList();
+    if (page === 'admin') loadAdminPanel();
+    if (page === 'topicDetail' && communityTopicId) {
+        loadTopicDetailPage(communityTopicId);
+    }
     if (page === 'editor' && editMode && editMode.classList.contains('active')) {
         updateEditModeBanner();
         updateJewelryFlowLayout();
@@ -1349,6 +1525,7 @@ function setCompareAfterEdit(beforeDataUrl, outThumbOrUrl, outFullUrl) {
 }
 
 async function registerHistoryEntry(entry) {
+    lastCompletedHistoryEntry = entry;
     const arr = readHistory();
     arr.unshift(entry);
     writeHistory(arr);
@@ -1526,13 +1703,17 @@ function createSampleFile(kind) {
 }
 
 async function loadSettingsPanel() {
-    if (!settingsVersionOut) return;
+    if (!settingsVersionOut) {
+        await loadLedgerPanel();
+        return;
+    }
     try {
         const url = apiUrl('/api/version');
         const r = await fetch(url);
         if (r.ok) {
             const j = await r.json();
             settingsVersionOut.textContent = JSON.stringify(j, null, 2);
+            await loadLedgerPanel();
             return;
         }
         const body = await r.text();
@@ -1556,6 +1737,7 @@ async function loadSettingsPanel() {
                     null,
                     2
                 );
+                await loadLedgerPanel();
                 return;
             }
         } catch (_) {
@@ -1586,6 +1768,25 @@ async function loadSettingsPanel() {
         settingsVersionOut.textContent = JSON.stringify(payload, null, 2);
     } catch (e) {
         settingsVersionOut.textContent = String(e.message || e);
+    }
+    await loadLedgerPanel();
+}
+
+async function loadLedgerPanel() {
+    const el = document.getElementById('settingsLedgerOut');
+    if (!el) return;
+    if (!currentUser) {
+        el.textContent = i18n[currentLang]['settings.ledgerLogin'];
+        return;
+    }
+    el.textContent = i18n[currentLang]['community.loading'];
+    try {
+        const r = await apiFetch(apiUrl('/api/auth/point-ledger?pageSize=40'));
+        const j = await r.json();
+        if (!r.ok || j.code !== 0) throw new Error(j.message || 'ledger');
+        el.textContent = JSON.stringify(j.data, null, 2);
+    } catch (e) {
+        el.textContent = String(e.message || e);
     }
 }
 
@@ -1639,6 +1840,722 @@ function shrinkDataUrl(dataUrl, maxW = 320) {
         im.onerror = () => resolve(null);
         im.src = dataUrl;
     });
+}
+
+// --- 话题挑战 / 作品社区（Phase 1） ---
+
+function communityEsc(s) {
+    const d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+}
+
+function communityFormatDate(iso) {
+    if (!iso) return '—';
+    try {
+        const d = new Date(iso);
+        return d.toLocaleDateString(currentLang === 'zh' ? 'zh-CN' : 'en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    } catch (_) {
+        return String(iso);
+    }
+}
+
+function buildHistoryProofFromItem(item) {
+    if (!item || item.status !== 'done') return null;
+    const wf =
+        item.mode === 'generate'
+            ? 't2i_generate'
+            : item.params && item.params.workflowTemplate;
+    if (!wf) return null;
+    return {
+        historyId: item.id,
+        at: item.at,
+        outRel: item.outRel,
+        thumbRel: item.thumbRel,
+        workflowTemplate: wf,
+        taskType: item.taskType,
+        mode: item.mode,
+        prompt: item.prompt,
+        params: item.params
+    };
+}
+
+function refreshCommunityUiLang() {
+    const td = document.getElementById('pageTopicDetail');
+    const tl = document.getElementById('pageTopics');
+    if (td && !td.classList.contains('hidden') && communityTopicId) {
+        loadTopicDetailPage(communityTopicId);
+    } else if (tl && !tl.classList.contains('hidden')) {
+        loadTopicsList();
+    }
+}
+
+async function loadTopicsList() {
+    const grid = document.getElementById('topicsListGrid');
+    if (!grid) return;
+    grid.innerHTML = `<p class="community-loading">${communityEsc(
+        i18n[currentLang]['community.loading']
+    )}</p>`;
+    try {
+        const r = await apiFetch(apiUrl('/api/topics?pageSize=40'));
+        const body = await r.json();
+        if (!r.ok || body.code !== 0) throw new Error(body.message || 'topics');
+        const { list } = body.data;
+        grid.innerHTML = '';
+        if (!list.length) {
+            grid.innerHTML = `<p class="empty-hint">${communityEsc(
+                i18n[currentLang]['history.empty']
+            )}</p>`;
+            return;
+        }
+        list.forEach((t) => {
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = 'topic-card';
+            card.innerHTML = `
+                <span class="topic-card-tag">${communityEsc(t.tag)}</span>
+                <span class="topic-card-title">${communityEsc(t.title)}</span>
+                <span class="topic-card-meta">${communityEsc(
+                    `${t.postCount || 0} · ${communityFormatDate(t.endAt)}`
+                )}</span>`;
+            card.addEventListener('click', () => {
+                communityTopicId = t.id;
+                showForgePage('topicDetail');
+            });
+            grid.appendChild(card);
+        });
+    } catch (e) {
+        grid.innerHTML = `<p class="publish-error">${communityEsc(e.message)}</p>`;
+    }
+}
+
+function updateTopicSortTabs() {
+    const tabs = document.getElementById('topicSortTabs');
+    if (!tabs) return;
+    tabs.querySelectorAll('button[data-sort]').forEach((b) => {
+        b.classList.toggle('active', b.dataset.sort === communityPostSort);
+    });
+}
+
+async function loadTopicDetailPage(topicId) {
+    const hero = document.getElementById('topicDetailHero');
+    const postsGrid = document.getElementById('topicPostsGrid');
+    const rankList = document.getElementById('topicRankingList');
+    if (!hero || !postsGrid || !rankList) return;
+    updateTopicSortTabs();
+    hero.innerHTML = `<p class="community-loading">${communityEsc(
+        i18n[currentLang]['community.loading']
+    )}</p>`;
+    postsGrid.innerHTML = '';
+    rankList.innerHTML = '';
+    try {
+        const [tr, pr, rr] = await Promise.all([
+            apiFetch(apiUrl(`/api/topics/${encodeURIComponent(topicId)}`)),
+            apiFetch(
+                apiUrl(
+                    `/api/topics/${encodeURIComponent(topicId)}/posts?sort=${encodeURIComponent(
+                        communityPostSort
+                    )}&pageSize=40`
+                )
+            ),
+            apiFetch(
+                apiUrl(
+                    `/api/topics/${encodeURIComponent(topicId)}/ranking?pageSize=15`
+                )
+            )
+        ]);
+        const tj = await tr.json();
+        const pj = await pr.json();
+        const rj = await rr.json();
+        if (!tr.ok || tj.code !== 0) throw new Error(tj.message || 'topic');
+        const topic = tj.data;
+        const submittedLabel = currentLang === 'zh' ? '已投稿' : 'Submitted';
+        hero.innerHTML = `
+            <h2>${communityEsc(topic.title)}</h2>
+            <p class="topic-hero-desc">${communityEsc(topic.description || '')}</p>
+            <p class="topic-hero-meta">${communityEsc(
+                `${communityFormatDate(topic.startAt)} — ${communityFormatDate(
+                    topic.endAt
+                )} · ${topic.postCount || 0}`
+            )}${
+                topic.mySubmitted ? ` · <strong>${submittedLabel}</strong>` : ''
+            }</p>
+            <p class="topic-hero-meta">${communityEsc(
+                `${i18n[currentLang]['community.sortLabel']}: ${(
+                    topic.allowedTaskTypes || []
+                ).join(', ')}`
+            )}</p>`;
+
+        if (!pr.ok || pj.code !== 0) throw new Error(pj.message || 'posts');
+        postsGrid.innerHTML = '';
+        pj.data.list.forEach((p) => {
+            postsGrid.appendChild(renderCommunityPostCard(p));
+        });
+        if (!pj.data.list.length) {
+            postsGrid.innerHTML = `<p class="empty-hint">${communityEsc(
+                i18n[currentLang]['history.empty']
+            )}</p>`;
+        }
+
+        rankList.innerHTML = '';
+        if (rj.code === 0 && rj.data && rj.data.list) {
+            rj.data.list.slice(0, 15).forEach((row) => {
+                const el = document.createElement('div');
+                el.className = 'rank-row';
+                const n = document.createElement('span');
+                n.className = 'rank-num';
+                n.textContent = String(row.rank);
+                const im = document.createElement('img');
+                im.alt = '';
+                im.loading = 'lazy';
+                im.src = row.imageUrl;
+                const txt = document.createElement('div');
+                const l1 = document.createElement('div');
+                l1.textContent = row.user.nickname;
+                const l2 = document.createElement('div');
+                l2.style.fontSize = '12px';
+                l2.style.color = 'var(--color-text-secondary)';
+                l2.textContent = `${row.score} · ♥ ${row.likeCount}`;
+                txt.appendChild(l1);
+                txt.appendChild(l2);
+                el.appendChild(n);
+                el.appendChild(im);
+                el.appendChild(txt);
+                rankList.appendChild(el);
+            });
+        }
+    } catch (e) {
+        hero.innerHTML = `<p class="publish-error">${communityEsc(e.message)}</p>`;
+    }
+}
+
+function fillReportReasonSelect(force) {
+    const sel = document.getElementById('reportReason');
+    if (!sel) return;
+    if (!force && sel.dataset.langFill === currentLang) return;
+    sel.innerHTML = '';
+    const specs = [
+        ['spam', 'moderation.opt.spam'],
+        ['copyright', 'moderation.opt.copyright'],
+        ['illegal', 'moderation.opt.illegal'],
+        ['harassment', 'moderation.opt.harassment'],
+        ['cheating', 'moderation.opt.cheating'],
+        ['other', 'moderation.opt.other']
+    ];
+    for (const [v, k] of specs) {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = i18n[currentLang][k];
+        sel.appendChild(o);
+    }
+    sel.dataset.langFill = currentLang;
+}
+
+function updatePostDetailFavUI(btn, favorited, count) {
+    if (!btn) return;
+    btn.classList.toggle('is-fav', !!favorited);
+    const n = count != null ? count : 0;
+    btn.textContent = favorited ? `★ ${n}` : `☆ ${n}`;
+}
+
+function renderCommunityPostCard(p) {
+    const card = document.createElement('div');
+    card.className = 'post-card';
+    const wrap = document.createElement('div');
+    wrap.className = 'post-card-img-wrap';
+    const img = document.createElement('img');
+    img.src = p.imageUrl;
+    img.alt = '';
+    img.loading = 'lazy';
+    const badge = document.createElement('span');
+    badge.className = 'post-ai-badge';
+    badge.textContent = i18n[currentLang]['community.aiBadge'];
+    wrap.appendChild(img);
+    wrap.appendChild(badge);
+    const body = document.createElement('div');
+    body.className = 'post-card-body';
+    const cap = document.createElement('div');
+    cap.className = 'post-card-cap';
+    cap.textContent = p.caption || '—';
+    const meta = document.createElement('div');
+    meta.className = 'post-card-meta';
+    const who = document.createElement('span');
+    who.textContent = p.user.nickname;
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'post-open-btn';
+    openBtn.textContent = i18n[currentLang]['community.openDetail'];
+    openBtn.dataset.postOpen = p.id;
+    const likeBtn = document.createElement('button');
+    likeBtn.type = 'button';
+    likeBtn.className = `post-like-btn${p.liked ? ' is-liked' : ''}`;
+    likeBtn.dataset.postId = p.id;
+    likeBtn.dataset.liked = p.liked ? '1' : '0';
+    likeBtn.textContent = `♥ ${p.likeCount}`;
+    if (!currentUser) likeBtn.disabled = true;
+    const favBtn = document.createElement('button');
+    favBtn.type = 'button';
+    favBtn.className = `post-fav-btn${p.favorited ? ' is-fav' : ''}`;
+    favBtn.dataset.favPost = p.id;
+    favBtn.textContent = p.favorited ? `★ ${p.favoriteCount}` : `☆ ${p.favoriteCount}`;
+    if (!currentUser) favBtn.disabled = true;
+    meta.appendChild(who);
+    meta.appendChild(openBtn);
+    meta.appendChild(favBtn);
+    meta.appendChild(likeBtn);
+    body.appendChild(cap);
+    body.appendChild(meta);
+    card.appendChild(wrap);
+    card.appendChild(body);
+    return card;
+}
+
+function wireCommunityPostGridDelegation() {
+    const postsGrid = document.getElementById('topicPostsGrid');
+    if (!postsGrid || postsGrid.dataset.wired === '1') return;
+    postsGrid.dataset.wired = '1';
+    postsGrid.addEventListener('click', async (e) => {
+        const favBtn = e.target.closest('.post-fav-btn[data-fav-post]');
+        if (favBtn && !favBtn.disabled) {
+            const id = favBtn.getAttribute('data-fav-post');
+            const favorited = favBtn.classList.contains('is-fav');
+            const method = favorited ? 'DELETE' : 'POST';
+            try {
+                const r = await apiFetch(apiUrl(`/api/posts/${encodeURIComponent(id)}/favorite`), {
+                    method
+                });
+                const j = await r.json();
+                if (!r.ok || j.code !== 0) throw new Error(j.message || 'favorite');
+                favBtn.classList.toggle('is-fav', j.data.favorited);
+                favBtn.textContent = j.data.favorited
+                    ? `★ ${j.data.favoriteCount}`
+                    : `☆ ${j.data.favoriteCount}`;
+                if (communityTopicId) loadTopicDetailPage(communityTopicId);
+            } catch (err) {
+                showAlert(err.message || 'favorite');
+            }
+            return;
+        }
+        const likeBtn = e.target.closest('.post-like-btn[data-post-id]');
+        if (likeBtn && !likeBtn.disabled) {
+            const id = likeBtn.getAttribute('data-post-id');
+            const liked = likeBtn.getAttribute('data-liked') === '1';
+            const method = liked ? 'DELETE' : 'POST';
+            try {
+                const r = await apiFetch(apiUrl(`/api/posts/${encodeURIComponent(id)}/like`), {
+                    method
+                });
+                const j = await r.json();
+                if (!r.ok || j.code !== 0) throw new Error(j.message || 'like');
+                likeBtn.setAttribute('data-liked', j.data.liked ? '1' : '0');
+                likeBtn.classList.toggle('is-liked', j.data.liked);
+                likeBtn.textContent = `♥ ${j.data.likeCount}`;
+            } catch (err) {
+                showAlert(err.message || 'like');
+            }
+            return;
+        }
+        const openBtn = e.target.closest('[data-post-open]');
+        if (openBtn) {
+            openPostDetailModal(openBtn.getAttribute('data-post-open'));
+        }
+    });
+}
+
+async function openPostDetailModal(postId) {
+    const modal = document.getElementById('postDetailModal');
+    if (!modal) return;
+    communityViewingPostId = postId;
+    modal.classList.remove('hidden');
+    syncModalScrollLock();
+    fillReportReasonSelect(false);
+    const img = document.getElementById('postDetailImg');
+    const cap = document.getElementById('postDetailCaption');
+    const meta = document.getElementById('postDetailMeta');
+    const box = document.getElementById('postDetailComments');
+    const inp = document.getElementById('postDetailCommentInput');
+    const favBtn = document.getElementById('postDetailFavBtn');
+    const rf = document.getElementById('reportFeedback');
+    const rn = document.getElementById('reportNote');
+    if (inp) inp.value = '';
+    if (rn) rn.value = '';
+    if (rf) {
+        rf.textContent = '';
+        rf.classList.add('hidden');
+    }
+    if (favBtn) {
+        favBtn.hidden = true;
+        favBtn.disabled = true;
+    }
+    try {
+        const r = await apiFetch(apiUrl(`/api/posts/${encodeURIComponent(postId)}`));
+        const j = await r.json();
+        if (!r.ok || j.code !== 0) throw new Error(j.message || 'post');
+        const p = j.data;
+        if (img) img.src = p.imageUrl;
+        if (cap) {
+            const promptLine =
+                p.promptSummary != null && String(p.promptSummary).length
+                    ? `\n${currentLang === 'zh' ? '提示摘要' : 'Prompt summary'}: ${p.promptSummary}`
+                    : '';
+            cap.textContent = (p.caption || '—') + promptLine;
+        }
+        if (meta) {
+            meta.textContent = [
+                `rank #${p.rank != null ? p.rank : '—'}`,
+                p.workflowTemplate,
+                p.taskType,
+                communityFormatDate(p.createdAt)
+            ].join(' · ');
+        }
+        if (favBtn && currentUser) {
+            favBtn.hidden = false;
+            favBtn.disabled = false;
+            updatePostDetailFavUI(favBtn, p.favorited, p.favoriteCount);
+        }
+        await renderPostDetailComments(postId, box);
+    } catch (e) {
+        if (cap) cap.textContent = e.message;
+    }
+}
+
+async function renderPostDetailComments(postId, box) {
+    if (!box) return;
+    box.innerHTML = '';
+    try {
+        const r = await apiFetch(
+            apiUrl(`/api/posts/${encodeURIComponent(postId)}/comments?pageSize=50`)
+        );
+        const j = await r.json();
+        if (!r.ok || j.code !== 0) return;
+        if (!j.data.list.length) {
+            box.innerHTML = `<p class="neg-hint">${communityEsc(
+                i18n[currentLang]['history.empty']
+            )}</p>`;
+            return;
+        }
+        j.data.list.forEach((c) => {
+            const row = document.createElement('div');
+            row.className = 'comment-row';
+            const au = document.createElement('div');
+            au.className = 'comment-author';
+            au.textContent = c.user.nickname;
+            const tx = document.createElement('div');
+            tx.textContent = c.content;
+            row.appendChild(au);
+            row.appendChild(tx);
+            box.appendChild(row);
+        });
+    } catch (_) {
+        /* ignore */
+    }
+}
+
+function closePostDetailModal() {
+    const modal = document.getElementById('postDetailModal');
+    if (modal) modal.classList.add('hidden');
+    communityViewingPostId = null;
+    syncModalScrollLock();
+}
+
+function closePublishModal() {
+    const modal = document.getElementById('publishModal');
+    if (modal) modal.classList.add('hidden');
+    communityPublishTargetItem = null;
+    syncModalScrollLock();
+}
+
+function communityErrorMessage(code) {
+    const map = {
+        40901: 'community.alreadySubmitted',
+        40902: 'moderation.duplicate',
+        40004: 'community.workflowRejected',
+        40005: 'community.fileMissing'
+    };
+    const k = map[code];
+    return k ? i18n[currentLang][k] : null;
+}
+
+async function openPublishModal(historyItem) {
+    const item = historyItem || lastCompletedHistoryEntry;
+    if (!item || item.status !== 'done') {
+        showAlert(i18n[currentLang]['history.empty']);
+        return;
+    }
+    if (!currentUser) {
+        showAlert(i18n[currentLang]['community.needLogin']);
+        return;
+    }
+    const proof = buildHistoryProofFromItem(item);
+    if (!proof) {
+        showAlert(i18n[currentLang]['community.workflowRejected']);
+        return;
+    }
+    communityPublishTargetItem = item;
+    const modal = document.getElementById('publishModal');
+    const sel = document.getElementById('publishTopicSelect');
+    const err = document.getElementById('publishModalError');
+    const cap = document.getElementById('publishCaption');
+    const pub = document.getElementById('publishPublicPrompt');
+    if (err) {
+        err.classList.add('hidden');
+        err.textContent = '';
+    }
+    if (cap) cap.value = '';
+    if (pub) pub.checked = false;
+    if (!modal) return;
+    try {
+        const r = await apiFetch(apiUrl('/api/topics?pageSize=50'));
+        const j = await r.json();
+        if (!r.ok || j.code !== 0) throw new Error(j.message || 'topics');
+        if (sel) {
+            sel.innerHTML = '';
+            j.data.list
+                .filter((t) => t.status === 'active')
+                .forEach((t) => {
+                    const o = document.createElement('option');
+                    o.value = t.id;
+                    o.textContent = t.title;
+                    sel.appendChild(o);
+                });
+        }
+    } catch (e) {
+        if (err) {
+            err.textContent = e.message;
+            err.classList.remove('hidden');
+        }
+    }
+    modal.classList.remove('hidden');
+    syncModalScrollLock();
+}
+
+async function submitPublishForm() {
+    const err = document.getElementById('publishModalError');
+    const sel = document.getElementById('publishTopicSelect');
+    const cap = document.getElementById('publishCaption');
+    const pub = document.getElementById('publishPublicPrompt');
+    if (err) {
+        err.classList.add('hidden');
+        err.textContent = '';
+    }
+    if (!currentUser) {
+        showAlert(i18n[currentLang]['community.needLogin']);
+        return;
+    }
+    const item = communityPublishTargetItem;
+    const proof = buildHistoryProofFromItem(item);
+    if (!item || !proof) {
+        showAlert(i18n[currentLang]['community.workflowRejected']);
+        return;
+    }
+    const topicId = sel && sel.value;
+    if (!topicId) {
+        if (err) {
+            err.textContent = i18n[currentLang]['community.pickTopic'];
+            err.classList.remove('hidden');
+        }
+        return;
+    }
+    try {
+        const r = await apiFetch(apiUrl(`/api/topics/${encodeURIComponent(topicId)}/posts`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                caption: (cap && cap.value) || '',
+                publicPrompt: pub && pub.checked,
+                historyProof: proof
+            })
+        });
+        const j = await r.json();
+        if (!r.ok || j.code !== 0) {
+            const msg = communityErrorMessage(j.code) || j.message || 'submit';
+            throw new Error(msg);
+        }
+        showToast(i18n[currentLang]['community.submitted']);
+        closePublishModal();
+        if (communityTopicId === topicId) loadTopicDetailPage(topicId);
+    } catch (e) {
+        if (err) {
+            err.textContent = e.message;
+            err.classList.remove('hidden');
+        } else {
+            showAlert(e.message);
+        }
+    }
+}
+
+function wireTopicDetailUi() {
+    fillReportReasonSelect(false);
+    const back = document.getElementById('topicDetailBack');
+    if (back && !back.dataset.wired) {
+        back.dataset.wired = '1';
+        back.addEventListener('click', () => {
+            communityTopicId = null;
+            showForgePage('topics');
+        });
+    }
+    const tabs = document.getElementById('topicSortTabs');
+    if (tabs && !tabs.dataset.wired) {
+        tabs.dataset.wired = '1';
+        tabs.addEventListener('click', (e) => {
+            const b = e.target.closest('button[data-sort]');
+            if (!b) return;
+            communityPostSort = b.dataset.sort || 'latest';
+            if (communityTopicId) loadTopicDetailPage(communityTopicId);
+        });
+    }
+    wireCommunityPostGridDelegation();
+
+    const pClose = document.getElementById('postDetailClose');
+    if (pClose && !pClose.dataset.wired) {
+        pClose.dataset.wired = '1';
+        pClose.addEventListener('click', closePostDetailModal);
+    }
+    const pModal = document.getElementById('postDetailModal');
+    if (pModal && !pModal.dataset.wired) {
+        pModal.dataset.wired = '1';
+        pModal.addEventListener('click', (e) => {
+            if (e.target === pModal) closePostDetailModal();
+        });
+    }
+    const send = document.getElementById('postDetailCommentSend');
+    if (send && !send.dataset.wired) {
+        send.dataset.wired = '1';
+        send.addEventListener('click', async () => {
+            if (!currentUser) {
+                showAlert(i18n[currentLang]['community.needLogin']);
+                return;
+            }
+            const pid = communityViewingPostId;
+            const inp = document.getElementById('postDetailCommentInput');
+            if (!pid || !inp) return;
+            try {
+                const r = await apiFetch(apiUrl(`/api/posts/${encodeURIComponent(pid)}/comments`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: inp.value })
+                });
+                const j = await r.json();
+                if (!r.ok || j.code !== 0) throw new Error(j.message || 'comment');
+                inp.value = '';
+                await renderPostDetailComments(
+                    pid,
+                    document.getElementById('postDetailComments')
+                );
+                if (communityTopicId) loadTopicDetailPage(communityTopicId);
+            } catch (e) {
+                showAlert(e.message);
+            }
+        });
+    }
+
+    const pdfb = document.getElementById('postDetailFavBtn');
+    if (pdfb && !pdfb.dataset.wired) {
+        pdfb.dataset.wired = '1';
+        pdfb.addEventListener('click', async () => {
+            const id = communityViewingPostId;
+            if (!id || !currentUser) return;
+            const favorited = pdfb.classList.contains('is-fav');
+            const method = favorited ? 'DELETE' : 'POST';
+            try {
+                const r = await apiFetch(apiUrl(`/api/posts/${encodeURIComponent(id)}/favorite`), {
+                    method
+                });
+                const j = await r.json();
+                if (!r.ok || j.code !== 0) throw new Error(j.message || 'favorite');
+                updatePostDetailFavUI(pdfb, j.data.favorited, j.data.favoriteCount);
+                if (communityTopicId) loadTopicDetailPage(communityTopicId);
+            } catch (err) {
+                showAlert(err.message || 'favorite');
+            }
+        });
+    }
+    const rsBtn = document.getElementById('reportSubmitBtn');
+    if (rsBtn && !rsBtn.dataset.wired) {
+        rsBtn.dataset.wired = '1';
+        rsBtn.addEventListener('click', async () => {
+            const pid = communityViewingPostId;
+            const sel = document.getElementById('reportReason');
+            const note = document.getElementById('reportNote');
+            const fb = document.getElementById('reportFeedback');
+            if (!pid) return;
+            if (!currentUser) {
+                showAlert(i18n[currentLang]['community.needLogin']);
+                return;
+            }
+            try {
+                const r = await apiFetch(apiUrl(`/api/posts/${encodeURIComponent(pid)}/report`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        reason: (sel && sel.value) || 'other',
+                        note: (note && note.value) || ''
+                    })
+                });
+                const j = await r.json();
+                if (!r.ok || j.code !== 0) {
+                    const msg =
+                        j.code === 40902
+                            ? i18n[currentLang]['moderation.duplicate']
+                            : j.message || 'report';
+                    throw new Error(msg);
+                }
+                if (fb) {
+                    fb.textContent = i18n[currentLang]['moderation.done'];
+                    fb.classList.remove('hidden');
+                }
+            } catch (e) {
+                if (fb) {
+                    fb.textContent = e.message;
+                    fb.classList.remove('hidden');
+                }
+            }
+        });
+    }
+    const btnLedger = document.getElementById('btnRefreshLedger');
+    if (btnLedger && !btnLedger.dataset.wired) {
+        btnLedger.dataset.wired = '1';
+        btnLedger.addEventListener('click', () => loadLedgerPanel());
+    }
+
+    const rp = document.getElementById('resultPublishBtn');
+    if (rp && !rp.dataset.wired) {
+        rp.dataset.wired = '1';
+        rp.addEventListener('click', () => openPublishModal(lastCompletedHistoryEntry));
+    }
+    const hp = document.getElementById('historyModalPublishBtn');
+    if (hp && !hp.dataset.wired) {
+        hp.dataset.wired = '1';
+        hp.addEventListener('click', () => {
+            if (historyModalItem) openPublishModal(historyModalItem);
+        });
+    }
+    const pmC = document.getElementById('publishModalClose');
+    const pmX = document.getElementById('publishCancelBtn');
+    if (pmC && !pmC.dataset.wired) {
+        pmC.dataset.wired = '1';
+        pmC.addEventListener('click', closePublishModal);
+    }
+    if (pmX && !pmX.dataset.wired) {
+        pmX.dataset.wired = '1';
+        pmX.addEventListener('click', closePublishModal);
+    }
+    const pms = document.getElementById('publishSubmitBtn');
+    if (pms && !pms.dataset.wired) {
+        pms.dataset.wired = '1';
+        pms.addEventListener('click', submitPublishForm);
+    }
+    const publishModal = document.getElementById('publishModal');
+    if (publishModal && !publishModal.dataset.wired) {
+        publishModal.dataset.wired = '1';
+        publishModal.addEventListener('click', (e) => {
+            if (e.target === publishModal) closePublishModal();
+        });
+    }
 }
 
 // 切换语言
@@ -1707,6 +2624,8 @@ function switchLanguage(lang) {
         updateJewelryFlowLayout();
     }
     updateEditButton();
+    refreshCommunityUiLang();
+    fillReportReasonSelect(true);
 }
 
 // 更新下载按钮文本
@@ -1743,7 +2662,16 @@ function syncModalScrollLock() {
     const authOpen = authOverlay && !authOverlay.classList.contains('hidden');
     const cookieOpen =
         cookieConsentOverlay && !cookieConsentOverlay.classList.contains('hidden');
-    document.documentElement.classList.toggle('modal-scroll-lock', !!(authOpen || cookieOpen));
+    const publishModal = document.getElementById('publishModal');
+    const publishOpen =
+        publishModal && !publishModal.classList.contains('hidden');
+    const postDetailModal = document.getElementById('postDetailModal');
+    const postDetailOpen =
+        postDetailModal && !postDetailModal.classList.contains('hidden');
+    document.documentElement.classList.toggle(
+        'modal-scroll-lock',
+        !!(authOpen || cookieOpen || publishOpen || postDetailOpen)
+    );
 }
 
 async function authenticateWithInviteCode(accessCode) {
@@ -1758,6 +2686,9 @@ async function authenticateWithInviteCode(accessCode) {
         if (data.success) {
             currentUser = data.user;
             currentAccessCode = accessCode;
+            currentAuthPortal = 'user';
+            sessionIsAdmin = false;
+            updateAdminNavVisibility();
             updateUserInfo();
             authOverlay.classList.add('hidden');
             syncModalScrollLock();
@@ -1778,6 +2709,7 @@ async function restoreAuth() {
             if (d.success && d.user) {
                 currentUser = d.user;
                 currentAccessCode = null;
+                applySessionPortalFromAuth(d);
                 updateUserInfo();
                 authOverlay.classList.add('hidden');
                 syncModalScrollLock();
@@ -1809,6 +2741,426 @@ function getEditCreditLabelAmount() {
     return cc[k] != null ? cc[k] : cc.edit;
 }
 
+async function refreshAdminUserMap() {
+    adminUserMap.clear();
+    try {
+        const r = await apiFetch(apiUrl('/api/admin/users'));
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.code === 0 && Array.isArray(d.data?.list)) {
+            for (const u of d.data.list) adminUserMap.set(u.id, u);
+        }
+    } catch (_) {
+        /* ignore */
+    }
+}
+
+function adminUserLabel(userId) {
+    if (userId == null) return '—';
+    const u = adminUserMap.get(userId);
+    if (!u) return String(userId);
+    const name = u.username || u.email || userId;
+    return `${name} (${userId})`;
+}
+
+async function loadAdminTopicsBrowser() {
+    const el = document.getElementById('adminTopicsBrowser');
+    if (!el) return;
+    const failMsg =
+        (i18n[currentLang] && i18n[currentLang]['admin.loadFailed']) ||
+        'Failed to load';
+    el.textContent = '';
+    try {
+        const tr = await apiFetch(apiUrl('/api/admin/topics?pageSize=100'));
+        const td = await tr.json().catch(() => ({}));
+        if (!tr.ok || td.code !== 0) {
+            const p = document.createElement('p');
+            p.className = 'neg-hint';
+            p.textContent = td.message || failMsg;
+            el.appendChild(p);
+            return;
+        }
+        const loadPostsLabel =
+            (i18n[currentLang] && i18n[currentLang]['admin.loadPosts']) ||
+            'Load posts';
+        const fullLabel =
+            (i18n[currentLang] && i18n[currentLang]['admin.viewFull']) ||
+            'Full content';
+        const list = td.data?.list || [];
+        for (const t of list) {
+            const wrap = document.createElement('div');
+            wrap.className = 'admin-topic-block';
+            const h4 = document.createElement('h4');
+            h4.textContent = t.title;
+            wrap.appendChild(h4);
+            const meta = document.createElement('p');
+            meta.className = 'admin-meta';
+            meta.textContent = `${t.id} · ${t.status} · ${t.startAt} – ${t.endAt} · posts ${t.postCount}`;
+            wrap.appendChild(meta);
+            const desc = document.createElement('div');
+            desc.className = 'admin-topic-desc';
+            desc.textContent = t.description || '';
+            wrap.appendChild(desc);
+            const rulesPre = document.createElement('pre');
+            rulesPre.className = 'admin-pre admin-pre-small';
+            rulesPre.textContent = JSON.stringify(t.rewardRules, null, 2);
+            wrap.appendChild(rulesPre);
+            const postsBox = document.createElement('div');
+            postsBox.className = 'admin-topic-posts';
+            wrap.appendChild(postsBox);
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn-secondary';
+            btn.textContent = loadPostsLabel;
+            btn.addEventListener('click', async () => {
+                postsBox.textContent = '';
+                const pr = await apiFetch(
+                    apiUrl(
+                        `/api/admin/topics/${encodeURIComponent(t.id)}/posts?pageSize=100`
+                    )
+                );
+                const pd = await pr.json().catch(() => ({}));
+                if (!pr.ok || pd.code !== 0) {
+                    postsBox.textContent = pd.message || failMsg;
+                    return;
+                }
+                const grid = document.createElement('div');
+                grid.className = 'admin-post-grid';
+                for (const post of pd.data.list || []) {
+                    const card = document.createElement('div');
+                    card.className = 'admin-post-card';
+                    const img = document.createElement('img');
+                    img.src = post.thumbUrl || post.imageUrl;
+                    img.alt = '';
+                    img.loading = 'lazy';
+                    card.appendChild(img);
+                    const cap = document.createElement('p');
+                    cap.textContent = (post.caption || '').slice(0, 160);
+                    card.appendChild(cap);
+                    const st = document.createElement('div');
+                    st.className = 'admin-post-card-meta';
+                    st.textContent = `${post.status} · ${adminUserLabel(post.userId)}`;
+                    card.appendChild(st);
+                    const b2 = document.createElement('button');
+                    b2.type = 'button';
+                    b2.className = 'btn-secondary';
+                    b2.textContent = fullLabel;
+                    b2.addEventListener('click', () =>
+                        showAdminPostInspect(post.id)
+                    );
+                    card.appendChild(b2);
+                    grid.appendChild(card);
+                }
+                postsBox.appendChild(grid);
+            });
+            wrap.appendChild(btn);
+            el.appendChild(wrap);
+        }
+        if (!list.length) {
+            const p = document.createElement('p');
+            p.textContent = '—';
+            el.appendChild(p);
+        }
+    } catch (e) {
+        el.textContent = failMsg;
+        console.error(e);
+    }
+}
+
+async function loadAdminLedgerBlock() {
+    const el = document.getElementById('adminLedgerWrap');
+    if (!el) return;
+    const failMsg =
+        (i18n[currentLang] && i18n[currentLang]['admin.loadFailed']) ||
+        'Failed to load';
+    el.innerHTML = '';
+    try {
+        const lr = await apiFetch(apiUrl('/api/admin/ledger?pageSize=100'));
+        const ld = await lr.json().catch(() => ({}));
+        if (!lr.ok || ld.code !== 0) {
+            const p = document.createElement('p');
+            p.className = 'neg-hint';
+            p.textContent = ld.message || failMsg;
+            el.appendChild(p);
+            return;
+        }
+        const tbl = document.createElement('table');
+        tbl.className = 'admin-ledger-table';
+        const thead = document.createElement('thead');
+        const hr = document.createElement('tr');
+        for (const h of ['time', 'user', 'type', 'amt', 'bal', 'remark']) {
+            const th = document.createElement('th');
+            th.textContent = h;
+            hr.appendChild(th);
+        }
+        thead.appendChild(hr);
+        tbl.appendChild(thead);
+        const tb = document.createElement('tbody');
+        for (const row of ld.data.list || []) {
+            const tr = document.createElement('tr');
+            const cells = [
+                row.createdAt,
+                adminUserLabel(row.userId),
+                row.type,
+                String(row.amount),
+                row.balanceAfter != null ? String(row.balanceAfter) : '—',
+                row.remark || ''
+            ];
+            for (const c of cells) {
+                const td = document.createElement('td');
+                td.textContent = c;
+                tr.appendChild(td);
+            }
+            tb.appendChild(tr);
+        }
+        tbl.appendChild(tb);
+        el.appendChild(tbl);
+        const total = ld.data.total ?? 0;
+        const page = ld.data.page ?? 1;
+        const ps = ld.data.pageSize ?? 1;
+        const pages = Math.max(1, Math.ceil(total / ps));
+        const foot = document.createElement('p');
+        foot.className = 'muted';
+        foot.textContent = `total ${total} · page ${page} / ${pages}`;
+        el.appendChild(foot);
+    } catch (e) {
+        el.textContent = failMsg;
+        console.error(e);
+    }
+}
+
+async function showAdminPostInspect(postId) {
+    const panel = document.getElementById('adminPostInspect');
+    const body = document.getElementById('adminPostInspectBody');
+    if (!panel || !body) return;
+    const failMsg =
+        (i18n[currentLang] && i18n[currentLang]['admin.loadFailed']) ||
+        'Failed to load';
+    panel.classList.remove('hidden');
+    body.textContent = '…';
+    const cmtHeading =
+        (i18n[currentLang] && i18n[currentLang]['admin.commentsHeading']) ||
+        'Comments';
+    const promptSummaryLab =
+        (i18n[currentLang] && i18n[currentLang]['admin.promptSummary']) ||
+        'Prompt summary';
+    const historyProofLab =
+        (i18n[currentLang] && i18n[currentLang]['admin.historyProof']) ||
+        'historyProof';
+    try {
+        const r = await apiFetch(
+            apiUrl(`/api/admin/posts/${encodeURIComponent(postId)}`)
+        );
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.code !== 0) {
+            body.textContent = d.message || failMsg;
+            return;
+        }
+        const p = d.data;
+        body.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = p.imageUrl;
+        img.alt = '';
+        img.className = 'admin-inspect-img';
+        body.appendChild(img);
+        const cap = document.createElement('p');
+        cap.className = 'admin-inspect-caption';
+        cap.textContent = p.caption || '';
+        body.appendChild(cap);
+        const meta = document.createElement('div');
+        meta.className = 'admin-inspect-meta';
+        meta.textContent = [
+            p.id,
+            p.status,
+            adminUserLabel(p.userId),
+            p.topicId,
+            typeof p.score === 'number' ? `score ${p.score}` : '',
+            p.createdAt
+        ]
+            .filter(Boolean)
+            .join(' · ');
+        body.appendChild(meta);
+        const promptLab = document.createElement('strong');
+        promptLab.textContent = promptSummaryLab;
+        body.appendChild(promptLab);
+        const promptPre = document.createElement('pre');
+        promptPre.className = 'admin-pre';
+        promptPre.textContent = p.promptSummary || '';
+        body.appendChild(promptPre);
+        const hpLab = document.createElement('strong');
+        hpLab.textContent = historyProofLab;
+        body.appendChild(hpLab);
+        const hpPre = document.createElement('pre');
+        hpPre.className = 'admin-pre';
+        try {
+            hpPre.textContent = JSON.stringify(p.historyProof, null, 2);
+        } catch (_) {
+            hpPre.textContent = String(p.historyProof);
+        }
+        body.appendChild(hpPre);
+        const likeLab = document.createElement('div');
+        likeLab.className = 'admin-inspect-meta';
+        const lids = p.likeUserIds || [];
+        likeLab.textContent = `likes (${lids.length}): ${lids.map(adminUserLabel).join(', ') || '—'}`;
+        body.appendChild(likeLab);
+        const favLab = document.createElement('div');
+        favLab.className = 'admin-inspect-meta';
+        const fids = p.favoriteUserIds || [];
+        favLab.textContent = `favorites (${fids.length}): ${fids.map(adminUserLabel).join(', ') || '—'}`;
+        body.appendChild(favLab);
+        const cmtTitle = document.createElement('h4');
+        cmtTitle.textContent = cmtHeading;
+        body.appendChild(cmtTitle);
+        const ul = document.createElement('ul');
+        ul.className = 'admin-comment-list';
+        for (const c of p.comments || []) {
+            const li = document.createElement('li');
+            const who = (c.user && c.user.nickname) || c.userId;
+            li.textContent = `${who} @ ${c.createdAt}: ${c.content || ''}`;
+            ul.appendChild(li);
+        }
+        body.appendChild(ul);
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (e) {
+        body.textContent = failMsg;
+        console.error(e);
+    }
+}
+
+function updateAdminNavVisibility() {
+    if (!navBtnAdmin) return;
+    const show = currentAuthPortal === 'admin' && sessionIsAdmin;
+    navBtnAdmin.classList.toggle('hidden', !show);
+}
+
+function applySessionPortalFromAuth(d) {
+    if (!d) return;
+    currentAuthPortal = d.authPortal || 'user';
+    sessionIsAdmin = !!d.isAdmin;
+    updateAdminNavVisibility();
+}
+
+async function loadAdminPanel() {
+    const sumEl = document.getElementById('adminSummaryOut');
+    const repEl = document.getElementById('adminReportsList');
+    const setEl = document.getElementById('adminSettleList');
+    if (!sumEl || !repEl || !setEl) return;
+    const failMsg =
+        (i18n[currentLang] && i18n[currentLang]['admin.loadFailed']) ||
+        'Failed to load';
+    let pending = [];
+    try {
+        await refreshAdminUserMap();
+        const sr = await apiFetch(apiUrl('/api/admin/summary'));
+        const sd = await sr.json().catch(() => ({}));
+        if (!sr.ok || sd.code !== 0) {
+            sumEl.textContent = `${failMsg}: ${sd.message || sr.status}`;
+        } else {
+            sumEl.textContent = JSON.stringify(sd.data, null, 2);
+            pending = sd.data?.pendingSettlementTopicIds || [];
+        }
+        const rr = await apiFetch(apiUrl('/api/admin/moderation?status=open'));
+        const rd = await rr.json().catch(() => ({}));
+        repEl.innerHTML = '';
+        if (!rr.ok || rd.code !== 0) {
+            const p = document.createElement('p');
+            p.className = 'neg-hint';
+            p.textContent = rd.message || failMsg;
+            repEl.appendChild(p);
+        } else {
+            const list = rd.data?.list || [];
+            const resLabel =
+                (i18n[currentLang] && i18n[currentLang]['admin.resolve']) ||
+                'Resolve';
+            const viewPostLabel =
+                (i18n[currentLang] &&
+                    i18n[currentLang]['admin.viewReportedPost']) ||
+                'View post';
+            for (const r of list) {
+                const row = document.createElement('div');
+                row.className = 'admin-row';
+                const line = document.createElement('div');
+                line.textContent = `${r.id} · post ${r.postId} · ${r.reason}`;
+                row.appendChild(line);
+                const btnView = document.createElement('button');
+                btnView.type = 'button';
+                btnView.className = 'btn-secondary';
+                btnView.textContent = viewPostLabel;
+                btnView.addEventListener('click', () =>
+                    showAdminPostInspect(r.postId)
+                );
+                row.appendChild(btnView);
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn-secondary';
+                btn.textContent = resLabel;
+                btn.addEventListener('click', async () => {
+                    const res = await apiFetch(
+                        apiUrl(`/api/admin/moderation/${r.id}/resolve`),
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                resolution: 'reviewed',
+                                adminNote: ''
+                            })
+                        }
+                    );
+                    if (res.ok) loadAdminPanel();
+                    else showToast(failMsg);
+                });
+                row.appendChild(btn);
+                repEl.appendChild(row);
+            }
+            if (!list.length) {
+                const p = document.createElement('p');
+                p.textContent = '—';
+                repEl.appendChild(p);
+            }
+        }
+        setEl.innerHTML = '';
+        const settleLabel =
+            (i18n[currentLang] && i18n[currentLang]['admin.runSettle']) ||
+            'Settle';
+        const okLabel =
+            (i18n[currentLang] && i18n[currentLang]['admin.settleOk']) ||
+            'Done';
+        for (const tid of pending) {
+            const row = document.createElement('div');
+            row.className = 'admin-row';
+            row.innerHTML = `<code>${tid}</code>`;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn-secondary';
+            btn.textContent = settleLabel;
+            btn.addEventListener('click', async () => {
+                const res = await apiFetch(
+                    apiUrl(`/api/admin/topics/${tid}/settle`),
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: '{}'
+                    }
+                );
+                if (res.ok) {
+                    showToast(okLabel);
+                    loadAdminPanel();
+                } else showToast(failMsg);
+            });
+            row.appendChild(btn);
+            setEl.appendChild(row);
+        }
+        if (!pending.length) {
+            const p = document.createElement('p');
+            p.textContent = '—';
+            setEl.appendChild(p);
+        }
+        await Promise.all([loadAdminTopicsBrowser(), loadAdminLedgerBlock()]);
+    } catch (e) {
+        sumEl.textContent = failMsg;
+        console.error(e);
+    }
+}
+
 function updateUserInfo() {
     if (!currentUser) return;
 
@@ -1831,6 +3183,7 @@ function updateUserInfo() {
             generateBtnCredit.classList.remove('hidden');
         }
     }
+    updateAdminNavVisibility();
 }
 
 async function loadPlans() {
@@ -1986,6 +3339,15 @@ function wireAuthForms() {
         });
     });
 
+    authOverlay.querySelectorAll('[data-auth-portal]').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            authPortalIntent = chip.getAttribute('data-auth-portal') || 'user';
+            authOverlay.querySelectorAll('[data-auth-portal]').forEach((c) => {
+                c.classList.toggle('auth-chip--active', c === chip);
+            });
+        });
+    });
+
     document.getElementById('btnSendLoginCode')?.addEventListener('click', async () => {
         const btn = document.getElementById('btnSendLoginCode');
         const email = document.getElementById('loginEmail')?.value.trim();
@@ -2043,13 +3405,18 @@ function wireAuthForms() {
                 const r = await apiFetch(apiUrl('/api/auth/login-password'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
+                    body: JSON.stringify({
+                        email,
+                        password,
+                        intent: authPortalIntent
+                    })
                 });
                 const d = await r.json().catch(() => ({}));
                 if (!r.ok) throw new Error(d.error || 'login failed');
                 sessionStorage.removeItem(AUTH_KEY);
                 currentUser = d.user;
                 currentAccessCode = null;
+                applySessionPortalFromAuth(d);
                 updateUserInfo();
                 authOverlay.classList.add('hidden');
                 syncModalScrollLock();
@@ -2061,13 +3428,18 @@ function wireAuthForms() {
                 const r = await apiFetch(apiUrl('/api/auth/login-code'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, code })
+                    body: JSON.stringify({
+                        email,
+                        code,
+                        intent: authPortalIntent
+                    })
                 });
                 const d = await r.json().catch(() => ({}));
                 if (!r.ok) throw new Error(d.error || 'login failed');
                 sessionStorage.removeItem(AUTH_KEY);
                 currentUser = d.user;
                 currentAccessCode = null;
+                applySessionPortalFromAuth(d);
                 updateUserInfo();
                 authOverlay.classList.add('hidden');
                 syncModalScrollLock();
@@ -2104,6 +3476,7 @@ function wireAuthForms() {
             sessionStorage.removeItem(AUTH_KEY);
             currentUser = d.user;
             currentAccessCode = null;
+            applySessionPortalFromAuth(d);
             updateUserInfo();
             authOverlay.classList.add('hidden');
             syncModalScrollLock();
@@ -2132,6 +3505,7 @@ function wireAuthForms() {
             sessionStorage.removeItem(AUTH_KEY);
             currentUser = d.user;
             currentAccessCode = null;
+            applySessionPortalFromAuth(d);
             updateUserInfo();
             authOverlay.classList.add('hidden');
             syncModalScrollLock();
@@ -2799,9 +4173,20 @@ if (forgeNav) {
     });
 }
 
+btnAdminRefresh?.addEventListener('click', () => loadAdminPanel());
+document
+    .getElementById('btnAdminPostInspectClose')
+    ?.addEventListener('click', () => {
+        document.getElementById('adminPostInspect')?.classList.add('hidden');
+    });
+
 document.querySelectorAll('.home-card').forEach((card) => {
     card.addEventListener('click', () => {
         const open = card.dataset.open;
+        if (open === 'topics') {
+            showForgePage('topics');
+            return;
+        }
         if (open === 'history') {
             showForgePage('history');
             return;
@@ -3022,6 +4407,7 @@ if (batchRunBtn) {
 }
 
 // Initialize（邮箱会话 + 可选邀请码回退）
+wireTopicDetailUi();
 initCookieConsent();
 wireAuthForms();
 if (logoutBtn) {
@@ -3032,6 +4418,10 @@ if (logoutBtn) {
         sessionStorage.removeItem(AUTH_KEY);
         currentUser = null;
         currentAccessCode = null;
+        currentAuthPortal = 'user';
+        sessionIsAdmin = false;
+        updateAdminNavVisibility();
+        showForgePage('home');
         userInfo.classList.add('hidden');
         authOverlay.classList.remove('hidden');
         syncModalScrollLock();

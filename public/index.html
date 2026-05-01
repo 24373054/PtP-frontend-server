@@ -40,6 +40,10 @@
                     <button type="button" class="auth-chip auth-chip--active" data-login-mode="password" data-i18n="auth.modePassword">密码登录</button>
                     <button type="button" class="auth-chip" data-login-mode="code" data-i18n="auth.modeCode">验证码登录</button>
                 </div>
+                <div class="auth-inline auth-portal-row">
+                    <button type="button" class="auth-chip auth-chip--active" data-auth-portal="user" data-i18n="auth.portalUser">用户入口</button>
+                    <button type="button" class="auth-chip" data-auth-portal="admin" data-i18n="auth.portalAdmin">管理员入口</button>
+                </div>
                 <div id="loginBlockPassword">
                     <label class="auth-field"><span data-i18n="auth.password">密码</span><input type="password" id="loginPassword" autocomplete="current-password"></label>
                 </div>
@@ -108,7 +112,54 @@
             </div>
             <div class="history-modal-actions">
                 <button type="button" class="btn-primary" id="historyModalOpenEditor" data-i18n="history.openEditor">在创作中打开</button>
+                <button type="button" class="btn-secondary-outline" id="historyModalPublishBtn" data-i18n="community.publish">发布到话题</button>
                 <button type="button" id="historyModalClose" data-i18n="history.close">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="publishModal" class="history-modal hidden" role="dialog" aria-modal="true" aria-labelledby="publishModalTitle">
+        <div class="history-modal-inner publish-modal-inner">
+            <h3 id="publishModalTitle" data-i18n="community.publishTitle">发布到话题</h3>
+            <p class="neg-hint" data-i18n="community.publishHint">仅可投稿服务器上仍可访问的输出文件；每个话题限投一件。</p>
+            <label class="publish-field-label" data-i18n="community.pickTopic">选择话题</label>
+            <select id="publishTopicSelect" class="publish-select"></select>
+            <label class="publish-field-label" data-i18n="community.caption">作品说明</label>
+            <textarea id="publishCaption" class="publish-textarea" rows="3" data-i18n-placeholder="community.captionPh"></textarea>
+            <label class="publish-check">
+                <input type="checkbox" id="publishPublicPrompt" />
+                <span data-i18n="community.publicPrompt">公开提示词摘要</span>
+            </label>
+            <p id="publishModalError" class="publish-error hidden"></p>
+            <div class="history-modal-actions">
+                <button type="button" class="btn-primary" id="publishSubmitBtn" data-i18n="community.submit">投稿</button>
+                <button type="button" id="publishCancelBtn" data-i18n="community.cancel">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="postDetailModal" class="history-modal hidden" role="dialog" aria-modal="true">
+        <div class="history-modal-inner post-detail-modal-inner">
+            <h3 data-i18n="community.postDetail">作品详情</h3>
+            <img id="postDetailImg" alt="" class="post-detail-img" />
+            <p id="postDetailMeta" class="result-meta"></p>
+            <p id="postDetailCaption" class="post-detail-caption"></p>
+            <div class="post-detail-toolbar">
+                <button type="button" id="postDetailFavBtn" class="post-fav-btn" hidden>☆</button>
+            </div>
+            <div id="postDetailReportWrap" class="post-detail-report">
+                <label class="publish-field-label" data-i18n="moderation.reportTitle">举报</label>
+                <select id="reportReason" class="publish-select"></select>
+                <textarea id="reportNote" class="publish-textarea" rows="2" data-i18n-placeholder="moderation.notePh"></textarea>
+                <button type="button" class="btn-secondary-outline" id="reportSubmitBtn" data-i18n="moderation.submit">提交举报</button>
+                <p id="reportFeedback" class="publish-error hidden"></p>
+            </div>
+            <div id="postDetailComments" class="post-detail-comments"></div>
+            <label class="publish-field-label" data-i18n="community.yourComment">你的评论</label>
+            <textarea id="postDetailCommentInput" class="publish-textarea" rows="2" data-i18n-placeholder="community.commentPh"></textarea>
+            <div class="history-modal-actions">
+                <button type="button" class="btn-primary" id="postDetailCommentSend" data-i18n="community.sendComment">发送</button>
+                <button type="button" id="postDetailClose" data-i18n="history.close">关闭</button>
             </div>
         </div>
     </div>
@@ -142,6 +193,8 @@
             <button type="button" class="active" data-page="home" data-i18n="nav.home">首页</button>
             <button type="button" data-page="editor" data-i18n="nav.editor">创作</button>
             <button type="button" data-page="history" data-i18n="nav.history">历史</button>
+            <button type="button" data-page="topics" data-i18n="nav.topics">挑战</button>
+            <button type="button" class="hidden" data-page="admin" id="navAdmin" data-i18n="nav.admin">工作台</button>
             <button type="button" data-page="settings" data-i18n="nav.settings">设置</button>
         </nav>
 
@@ -174,6 +227,10 @@
                 <button type="button" class="home-card home-card-jewelry" data-open="editor" data-task="jewelry_macro">
                     <span class="hc-title" data-i18n="home.card.jewelry.macro.title">微距细节</span>
                     <span class="hc-desc" data-i18n="home.card.jewelry.macro.desc">商用放大 · jewelry_macro_detail</span>
+                </button>
+                <button type="button" class="home-card" data-open="topics">
+                    <span class="hc-title" data-i18n="home.card.topics.title">话题挑战</span>
+                    <span class="hc-desc" data-i18n="home.card.topics.desc">限时活动、投稿排行与奖励积分</span>
                 </button>
                 <button type="button" class="home-card" data-open="history">
                     <span class="hc-title" data-i18n="home.card.history.title">历史记录</span>
@@ -421,6 +478,7 @@
                     </div>
                     <div class="task-actions">
                         <button type="button" id="regenerateBtn" data-i18n="result.regenerate">Generate again</button>
+                        <button type="button" id="resultPublishBtn" class="btn-secondary-outline" data-i18n="community.publish">发布到话题</button>
                         <button type="button" id="cancelTaskBtn" class="btn-cancel hidden" data-i18n="task.cancel">Cancel</button>
                     </div>
                 </section>
@@ -437,6 +495,78 @@
             <p class="neg-hint" data-i18n="history.hint">Stored in this browser only.</p>
             <div id="historyList" class="history-list"></div>
             <p id="historyEmpty" class="empty-hint hidden" data-i18n="history.empty">No completed tasks yet.</p>
+        </div>
+
+        <div id="pageTopics" class="forge-page hidden">
+            <h2 data-i18n="community.title">话题挑战</h2>
+            <p class="neg-hint" data-i18n="community.subtitle">限时活动 · 平台生成作品参赛 · 公开展示含 AI 标识</p>
+            <div id="topicsListGrid" class="topic-list-grid"></div>
+        </div>
+
+        <div id="pageTopicDetail" class="forge-page hidden">
+            <button type="button" id="topicDetailBack" class="topic-back-btn" data-i18n="community.back">返回</button>
+            <div id="topicDetailHero" class="topic-hero glass-panel"></div>
+            <div class="topic-detail-layout">
+                <div class="topic-col-main">
+                    <div class="community-sort-tabs" id="topicSortTabs">
+                        <button type="button" class="active" data-sort="latest" data-i18n="community.sort.latest">最新</button>
+                        <button type="button" data-sort="hot" data-i18n="community.sort.hot">热度</button>
+                        <button type="button" data-sort="rank" data-i18n="community.sort.rank">排名</button>
+                    </div>
+                    <div id="topicPostsGrid" class="community-post-grid"></div>
+                </div>
+                <aside class="topic-col-rank glass-panel">
+                    <h3 data-i18n="community.leaderboard">排行榜</h3>
+                    <div id="topicRankingList" class="topic-ranking-list"></div>
+                </aside>
+            </div>
+        </div>
+
+        <div id="pageAdmin" class="forge-page hidden">
+            <div class="settings-block">
+                <h3 data-i18n="admin.title">管理工作台</h3>
+                <p class="neg-hint" data-i18n="admin.hint">需使用「管理员入口」登录；API 也可使用 X-Admin-Key。</p>
+                <div class="settings-actions">
+                    <button type="button" id="btnAdminRefresh" data-i18n="admin.refresh">刷新数据</button>
+                </div>
+                <pre id="adminSummaryOut">—</pre>
+            </div>
+            <div class="settings-block">
+                <h3 data-i18n="admin.reports">待处理举报</h3>
+                <div id="adminReportsList" class="admin-list"></div>
+            </div>
+            <div class="settings-block">
+                <h3 data-i18n="admin.settle">待结算话题</h3>
+                <div id="adminSettleList" class="admin-list"></div>
+            </div>
+            <div class="settings-block">
+                <h3 data-i18n="admin.topicsTitle">话题与作品（含隐藏）</h3>
+                <p class="neg-hint" data-i18n="admin.topicsHint">
+                    完整描述、规则与全部状态的作品；仅管理员可见。
+                </p>
+                <div id="adminTopicsBrowser" class="admin-topics-browser"></div>
+            </div>
+            <div class="settings-block">
+                <h3 data-i18n="admin.ledgerTitle">积分流水（全站）</h3>
+                <div id="adminLedgerWrap"></div>
+            </div>
+            <div
+                id="adminPostInspect"
+                class="settings-block admin-post-inspect hidden"
+            >
+                <div class="admin-post-inspect-head">
+                    <h3 data-i18n="admin.postInspectTitle">作品详情（管理员）</h3>
+                    <button
+                        type="button"
+                        id="btnAdminPostInspectClose"
+                        class="btn-secondary"
+                        data-i18n="admin.closeInspect"
+                    >
+                        关闭
+                    </button>
+                </div>
+                <div id="adminPostInspectBody"></div>
+            </div>
         </div>
 
         <div id="pageSettings" class="forge-page hidden">
@@ -465,6 +595,14 @@
                 <div class="settings-actions">
                     <button type="button" id="btnClearHistory" data-i18n="settings.clearHistory">Clear all history</button>
                 </div>
+            </div>
+            <div class="settings-block">
+                <h3 data-i18n="settings.ledgerTitle">积分流水</h3>
+                <p class="neg-hint" data-i18n="settings.ledgerHint">含活动奖励入账（需登录）。创作消耗见任务记录。</p>
+                <div class="settings-actions">
+                    <button type="button" id="btnRefreshLedger" data-i18n="settings.refreshLedger">刷新流水</button>
+                </div>
+                <pre id="settingsLedgerOut">—</pre>
             </div>
         </div>
     </div>

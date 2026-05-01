@@ -44,6 +44,70 @@ free_port_tcp() {
   echo "提示: 未找到 fuser/lsof，若重启后仍 EADDRINUSE，请手动结束占用 ${port} 的进程。" >&2
 }
 
+# 解析 conda 安装根目录（用于 source conda.sh；比 conda run 更易与「手动 activate yz」行为一致）
+ptp_conda_base() {
+  if [[ -n "${CONDA_EXE:-}" ]]; then
+    local d
+    d="$(dirname "$CONDA_EXE")"
+    if [[ -f "$d/../etc/profile.d/conda.sh" ]]; then
+      (cd "$d/.." && pwd)
+      return 0
+    fi
+  fi
+  if command -v conda >/dev/null 2>&1; then
+    conda info --base 2>/dev/null
+    return 0
+  fi
+  return 1
+}
+
+# conda activate 后必须用前缀里的二进制，否则 PATH 里可能仍是系统 node（导致检测用 v20、启动用 v25）
+ptp_require_conda_prefix_bin() {
+  if [[ -z "${CONDA_PREFIX:-}" || ! -x "${CONDA_PREFIX}/bin/node" ]]; then
+    echo "错误: conda activate「${CONDA_ENV_EFFECTIVE}」后 CONDA_PREFIX 无效或缺少 bin/node（CONDA_PREFIX=${CONDA_PREFIX:-未设置}）。" >&2
+    echo "请在该环境中执行: conda install -c conda-forge nodejs 或调整 PTP_CONDA_ENV。" >&2
+    return 1
+  fi
+  return 0
+}
+
+# 社区数据层使用 Node 内置 node:sqlite（需 Node >= 22.5），无 better-sqlite3 原生 ABI 问题。
+ensure_node_sqlite_runtime() {
+  [[ "${PTP_SKIP_NATIVE_CHECK:-}" == 1 ]] && return 0
+  if [[ -n "${PTP_NODE:-}" ]]; then
+    if ! "$PTP_NODE" -e "require('node:sqlite')" 2>/dev/null; then
+      echo "错误: ImageForge 需要 Node.js >= 22.5（内置 node:sqlite）。" >&2
+      "$PTP_NODE" -e "console.error('当前 Node:', process.version)" >&2
+      exit 1
+    fi
+  elif [[ -n "$CONDA_ENV_EFFECTIVE" ]]; then
+    local cbase
+    cbase="$(ptp_conda_base)" || {
+      echo "错误: 无法解析 conda 安装路径（conda info --base）。" >&2
+      exit 1
+    }
+    if ! (
+      set +u
+      # shellcheck source=/dev/null
+      source "$cbase/etc/profile.d/conda.sh"
+      conda activate "$CONDA_ENV_EFFECTIVE" || exit 1
+      set -e
+      ptp_require_conda_prefix_bin || exit 1
+      "$CONDA_PREFIX/bin/node" -e "require('node:sqlite')"
+    ); then
+      echo "错误: 当前 conda 环境的 Node 过旧，不支持内置 node:sqlite（需 >= 22.5）。" >&2
+      echo "可尝试: conda install -c conda-forge \"nodejs>=22\"" >&2
+      exit 1
+    fi
+  else
+    if ! (cd "$ROOT" && node -e "require('node:sqlite')" 2>/dev/null); then
+      echo "错误: ImageForge 需要 Node.js >= 22.5（内置 node:sqlite）。当前:" >&2
+      node -e "console.error(process.version)" >&2
+      exit 1
+    fi
+  fi
+}
+
 cmd_start() {
   if [[ -f "$PIDFILE" ]]; then
     local old
@@ -56,6 +120,7 @@ cmd_start() {
   fi
 
   touch "$LOGFILE"
+  ensure_node_sqlite_runtime
   # nohup 写入的 PID 有时是 conda 包装进程，与真正 listen 的 node 不一致；启动前清端口避免旧实例占坑
   free_port_tcp "$PORT"
 
@@ -67,7 +132,24 @@ cmd_start() {
       echo "请先初始化 conda，或设置 PTP_NODE 为 node 可执行文件，或 PTP_CONDA_ENV= 使用 PATH 中的 node。" >&2
       exit 1
     fi
-    nohup conda run --no-capture-output -n "$CONDA_ENV_EFFECTIVE" node "$ROOT/server.js" >>"$LOGFILE" 2>&1 &
+    local cbase
+    cbase="$(ptp_conda_base)" || {
+      echo "错误: 无法解析 conda 安装路径。" >&2
+      exit 1
+    }
+    # 与「conda activate yz && node server.js」同链路的 PATH/node，避免 conda run 下 npm 与 node 不一致
+    nohup env PTP_CONDA_BASE="$cbase" PTP_CONDA_ENV_NAME="$CONDA_ENV_EFFECTIVE" PTP_SERVER_ROOT="$ROOT" bash -c '
+      set -e
+      set +u
+      source "$PTP_CONDA_BASE/etc/profile.d/conda.sh"
+      conda activate "$PTP_CONDA_ENV_NAME" || exit 1
+      if [[ -z "${CONDA_PREFIX:-}" || ! -x "${CONDA_PREFIX}/bin/node" ]]; then
+        echo "ptp-daemon: conda activate 后无 CONDA_PREFIX/bin/node" >&2
+        exit 1
+      fi
+      cd "$PTP_SERVER_ROOT"
+      exec "$CONDA_PREFIX/bin/node" "$PTP_SERVER_ROOT/server.js"
+    ' >>"$LOGFILE" 2>&1 &
   else
     nohup node "$ROOT/server.js" >>"$LOGFILE" 2>&1 &
   fi
@@ -76,7 +158,7 @@ cmd_start() {
   if [[ -n "${PTP_NODE:-}" ]]; then
     echo "Node: $PTP_NODE"
   elif [[ -n "$CONDA_ENV_EFFECTIVE" ]]; then
-    echo "Conda 环境: $CONDA_ENV_EFFECTIVE (conda run)"
+    echo "Conda 环境: $CONDA_ENV_EFFECTIVE (source conda.sh + conda activate)"
   else
     echo "Node: PATH 中的 node"
   fi
@@ -154,12 +236,14 @@ usage() {
   echo "环境变量（可选）:"
   echo "  PTP_PORT         仅用于提示里的 URL，须与 server.js 中 PORT 一致（默认 38024）"
   echo "  PTP_LISTEN_URL   状态/启动提示中的完整地址，默认 http://127.0.0.1:\$PTP_PORT"
-  echo "  PTP_CONDA_ENV    未设置时默认 yz（conda run -n）；设为空字符串则不用 conda"
+  echo "  PTP_CONDA_ENV    未设置时默认 yz（启动前 source conda.sh 并 conda activate）；设为空字符串则不用 conda"
   echo "  PTP_NODE         若设置则优先使用该可执行文件启动 server.js，忽略 conda"
   echo "  PTP_LOG          日志路径，默认 \$ROOT/ptp-daemon.log"
   echo "  PTP_PIDFILE      PID 路径，默认 \$ROOT/.ptp.pid"
+  echo "  PTP_SKIP_NATIVE_CHECK=1  跳过 Node node:sqlite 版本检测（不推荐）"
   echo ""
   echo "说明: start/stop 时会尝试释放 \$PTP_PORT 上的监听进程，避免旧 node 占坑导致新代码无法加载。"
+  echo "      社区 SQLite 使用 Node 内置 node:sqlite；请保证 Node >= 22.5（与 package.json engines 一致）。"
 }
 
 case "${1:-}" in
