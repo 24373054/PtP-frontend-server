@@ -7,6 +7,10 @@ const os = require('os');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
+const bcrypt = require('bcrypt');
+const session = require('express-session');
+const accounts = require('./lib/accounts');
+const { sendVerificationCode } = require('./lib/mail');
 
 const app = express();
 const PORT = 38024;
@@ -68,6 +72,11 @@ function getVersionPayload() {
         version: APP_PACKAGE.version,
         role: 'imageforge-web-bff',
         comfyuiUrl: COMFYUI_URL,
+        /** 便于排查「Cannot POST /api/auth/...」：若此处无 authEmailOtp，说明跑的不是当前代码或未重启 */
+        capabilities: {
+            authEmailOtp: true,
+            authSendCodePost: '/api/auth/send-code'
+        },
         hint:
             'Web 仅请求本服务；ComfyUI 由服务端转发。鸿蒙端可对齐同一 REST/SSE 契约。'
     };
@@ -97,7 +106,14 @@ const SUBSCRIPTION_PLANS = {
     free: {
         name: { en: 'Free', zh: '免费版' },
         credits: 10,
-        creditCost: { edit: 2, generate: 1 },
+        creditCost: {
+            edit: 2,
+            generate: 1,
+            jewelry_retouch: 3,
+            jewelry_cutout: 3,
+            jewelry_scene: 4,
+            jewelry_macro: 3
+        },
         price: 0,
         features: {
             en: ['10 credits/month', 'Basic quality', 'Standard support'],
@@ -107,7 +123,14 @@ const SUBSCRIPTION_PLANS = {
     basic: {
         name: { en: 'Basic', zh: '基础版' },
         credits: 100,
-        creditCost: { edit: 2, generate: 1 },
+        creditCost: {
+            edit: 2,
+            generate: 1,
+            jewelry_retouch: 3,
+            jewelry_cutout: 3,
+            jewelry_scene: 4,
+            jewelry_macro: 3
+        },
         price: 9.99,
         features: {
             en: ['100 credits/month', 'High quality', 'Priority support', 'No watermark'],
@@ -117,7 +140,14 @@ const SUBSCRIPTION_PLANS = {
     pro: {
         name: { en: 'Professional', zh: '专业版' },
         credits: 500,
-        creditCost: { edit: 1, generate: 1 },
+        creditCost: {
+            edit: 1,
+            generate: 1,
+            jewelry_retouch: 2,
+            jewelry_cutout: 2,
+            jewelry_scene: 3,
+            jewelry_macro: 2
+        },
         price: 29.99,
         features: {
             en: ['500 credits/month', 'Ultra quality', '24/7 support', 'API access', 'Commercial license'],
@@ -127,7 +157,14 @@ const SUBSCRIPTION_PLANS = {
     enterprise: {
         name: { en: 'Enterprise', zh: '企业版' },
         credits: 2000,
-        creditCost: { edit: 1, generate: 1 },
+        creditCost: {
+            edit: 1,
+            generate: 1,
+            jewelry_retouch: 2,
+            jewelry_cutout: 2,
+            jewelry_scene: 3,
+            jewelry_macro: 2
+        },
         price: 99.99,
         features: {
             en: ['2000 credits/month', 'Maximum quality', 'Dedicated support', 'Custom API', 'White label', 'SLA guarantee'],
@@ -137,7 +174,14 @@ const SUBSCRIPTION_PLANS = {
     beta: {
         name: { en: 'Beta User', zh: '内测用户' },
         credits: 999999,
-        creditCost: { edit: 0, generate: 0 },
+        creditCost: {
+            edit: 0,
+            generate: 0,
+            jewelry_retouch: 0,
+            jewelry_cutout: 0,
+            jewelry_scene: 0,
+            jewelry_macro: 0
+        },
         price: 0,
         features: {
             en: ['Unlimited credits', 'All features', 'Beta access'],
@@ -145,6 +189,107 @@ const SUBSCRIPTION_PLANS = {
         }
     }
 };
+
+const SIGNUP_INITIAL_CREDITS = 30;
+
+/** 邮件验证码内存存储：key -> { code, expires } */
+const otpStore = new Map();
+const otpSendCooldown = new Map();
+
+function otpKey(email, purpose) {
+    return `${accounts.normalizeEmail(email)}:${purpose}`;
+}
+
+function resolveCreditCost(planId, operation) {
+    const plan = SUBSCRIPTION_PLANS[planId] || SUBSCRIPTION_PLANS.free;
+    if (planId === 'beta') return 0;
+    const c = plan.creditCost || {};
+    if (Object.prototype.hasOwnProperty.call(c, operation)) return c[operation];
+    if (operation === 'generate') return c.generate != null ? c.generate : 1;
+    return c.edit != null ? c.edit : 2;
+}
+
+function buildPublicUserFromAccount(acc, plan) {
+    return {
+        userId: acc.id,
+        username: acc.username,
+        email: acc.email,
+        plan: acc.plan,
+        planName: plan.name.en,
+        credits: acc.credits,
+        usedCredits: acc.usedCredits || 0,
+        creditCost: { ...plan.creditCost },
+        features: plan.features.en,
+        createdAt: acc.createdAt,
+        expiresAt: acc.expiresAt != null ? acc.expiresAt : null
+    };
+}
+
+function deductAccountUser(userId, operation) {
+    const acc = accounts.findById(userId);
+    if (!acc) {
+        return { success: false, error: 'User not found' };
+    }
+    const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
+    const cost = resolveCreditCost(acc.plan, operation);
+    if (acc.plan === 'beta') {
+        return { success: true, credits: acc.credits, cost: 0 };
+    }
+    if (acc.credits < cost) {
+        return {
+            success: false,
+            error: 'Insufficient credits',
+            credits: acc.credits,
+            required: cost
+        };
+    }
+    const nextCredits = acc.credits - cost;
+    const nextUsed = (acc.usedCredits || 0) + cost;
+    accounts.updateUser(userId, { credits: nextCredits, usedCredits: nextUsed });
+    return { success: true, credits: nextCredits, cost };
+}
+
+function deductCreditsAuth(auth, operation) {
+    if (!auth) return { success: false, error: 'Unauthorized' };
+    if (auth.kind === 'legacy') {
+        return deductCredits(auth.accessCode, operation);
+    }
+    return deductAccountUser(auth.userId, operation);
+}
+
+function resolveAuth(req) {
+    if (req.session && req.session.userId) {
+        const acc = accounts.findById(req.session.userId);
+        if (acc) {
+            const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
+            return {
+                kind: 'account',
+                userId: acc.id,
+                publicUser: buildPublicUserFromAccount(acc, plan)
+            };
+        }
+    }
+    const raw =
+        (req.body && req.body.accessCode) || (req.query && req.query.accessCode);
+    const code = typeof raw === 'string' ? raw.trim() : '';
+    if (code) {
+        const u = authenticateUser(code);
+        if (u) {
+            return { kind: 'legacy', accessCode: code, publicUser: u };
+        }
+    }
+    return null;
+}
+
+function getEditCreditOperationKey(workflowTemplate) {
+    const m = {
+        jewelry_retouch: 'jewelry_retouch',
+        jewelry_product_cutout: 'jewelry_cutout',
+        jewelry_scene: 'jewelry_scene',
+        jewelry_macro_detail: 'jewelry_macro'
+    };
+    return m[workflowTemplate] || 'edit';
+}
 
 // 读取用户数据
 function loadUsers() {
@@ -188,7 +333,7 @@ function authenticateUser(accessCode) {
         planName: plan.name.en, // 默认返回英文名称，前端会根据语言切换
         credits: user.credits,
         usedCredits: user.usedCredits,
-        creditCost: plan.creditCost,
+        creditCost: { ...plan.creditCost },
         features: plan.features.en,
         createdAt: user.createdAt,
         expiresAt: user.expiresAt
@@ -205,7 +350,7 @@ function deductCredits(accessCode, operation) {
     }
     
     const plan = SUBSCRIPTION_PLANS[user.plan] || SUBSCRIPTION_PLANS.free;
-    const cost = plan.creditCost[operation] || 1;
+    const cost = resolveCreditCost(user.plan, operation);
     
     // Beta用户不扣积分
     if (user.plan === 'beta') {
@@ -255,26 +400,230 @@ const upload = multer({
 });
 
 app.use(express.json());
+app.use(
+    session({
+        name: 'ptp.sid',
+        secret: process.env.SESSION_SECRET || 'dev-session-secret-change-me',
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            httpOnly: true,
+            sameSite: 'lax',
+            secure: process.env.SESSION_COOKIE_SECURE === '1'
+        }
+    })
+);
 
 // 靠前注册，避免线上进程因旧代码或未执行到文件后部而缺少该路由（Cannot GET /api/version）
 app.get('/api/version', (req, res) => {
     res.json(getVersionPayload());
 });
 
-// API: 用户认证
+const ALLOWED_OTP_PURPOSES = new Set(['register', 'login', 'reset_password']);
+
+function verifyOtp(email, purpose, code) {
+    const ck = otpKey(email, purpose);
+    const row = otpStore.get(ck);
+    if (!row || String(row.code) !== String(code).trim()) return false;
+    if (Date.now() > row.expires) {
+        otpStore.delete(ck);
+        return false;
+    }
+    otpStore.delete(ck);
+    return true;
+}
+
+function isValidUsername(username) {
+    const s = String(username || '').trim();
+    if (s.length < 2 || s.length > 32) return false;
+    return /^[a-zA-Z0-9_\-\u4e00-\u9fa5]+$/.test(s);
+}
+
+// API: 当前登录用户（邮箱注册 Cookie 会话）
+app.get('/api/auth/me', (req, res) => {
+    if (!req.session || !req.session.userId) {
+        return res.status(401).json({ success: false, error: 'Not logged in' });
+    }
+    const acc = accounts.findById(req.session.userId);
+    if (!acc) {
+        req.session.destroy(() => {});
+        return res.status(401).json({ success: false, error: 'Session invalid' });
+    }
+    const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
+    res.json({ success: true, user: buildPublicUserFromAccount(acc, plan) });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+    req.session.destroy(() => {
+        res.clearCookie('ptp.sid', { path: '/' });
+        res.json({ success: true });
+    });
+});
+
+app.post('/api/auth/send-code', async (req, res) => {
+    try {
+        const { email, purpose = 'login', lang = 'zh' } = req.body || {};
+        const em = accounts.normalizeEmail(email);
+        if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+            return res.status(400).json({ error: 'Invalid email' });
+        }
+        if (!ALLOWED_OTP_PURPOSES.has(purpose)) {
+            return res.status(400).json({ error: 'Invalid purpose' });
+        }
+        if (purpose === 'register' && accounts.findByEmail(em)) {
+            return res.status(400).json({ error: 'Email already registered' });
+        }
+        if ((purpose === 'login' || purpose === 'reset_password') && !accounts.findByEmail(em)) {
+            return res.status(400).json({ error: 'Email not registered' });
+        }
+        const ck = otpKey(em, purpose);
+        const last = otpSendCooldown.get(ck) || 0;
+        if (Date.now() - last < 55000) {
+            return res
+                .status(429)
+                .json({ error: 'Please wait about one minute before requesting another code' });
+        }
+        const code = String(Math.floor(100000 + Math.random() * 900000));
+        otpStore.set(ck, { code, expires: Date.now() + 10 * 60 * 1000 });
+        otpSendCooldown.set(ck, Date.now());
+        await sendVerificationCode(em, code, purpose, lang === 'en' ? 'en' : 'zh');
+        res.json({ success: true });
+    } catch (e) {
+        console.error('[send-code]', e);
+        res.status(500).json({ error: e.message || 'Failed to send email' });
+    }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+    try {
+        const { email, username, password, code, lang } = req.body || {};
+        const em = accounts.normalizeEmail(email);
+        if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+            return res.status(400).json({ error: 'Invalid email' });
+        }
+        if (!isValidUsername(username)) {
+            return res.status(400).json({ error: 'Invalid username (2–32 chars, letters/digits/_- or CJK)' });
+        }
+        const pw = String(password || '');
+        if (pw.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
+        if (accounts.findByEmail(em)) {
+            return res.status(400).json({ error: 'Email already registered' });
+        }
+        const uname = String(username).trim();
+        if (accounts.findByUsername(uname)) {
+            return res.status(400).json({ error: 'Username already taken' });
+        }
+        if (!verifyOtp(em, 'register', code)) {
+            return res.status(400).json({ error: 'Invalid or expired verification code' });
+        }
+        const passwordHash = await bcrypt.hash(pw, 10);
+        const id = uuidv4();
+        const user = {
+            id,
+            email: em,
+            username: uname,
+            usernameNorm: accounts.normalizeUsernameKey(uname),
+            passwordHash,
+            plan: 'free',
+            credits: SIGNUP_INITIAL_CREDITS,
+            usedCredits: 0,
+            createdAt: new Date().toISOString()
+        };
+        accounts.addUser(user);
+        req.session.userId = id;
+        const plan = SUBSCRIPTION_PLANS.free;
+        res.json({ success: true, user: buildPublicUserFromAccount(user, plan) });
+    } catch (e) {
+        console.error('[register]', e);
+        res.status(500).json({ error: e.message || 'Registration failed' });
+    }
+});
+
+app.post('/api/auth/login-password', async (req, res) => {
+    try {
+        const { email, password } = req.body || {};
+        const em = accounts.normalizeEmail(email);
+        const acc = accounts.findByEmail(em);
+        if (!acc || !acc.passwordHash) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+        const ok = await bcrypt.compare(String(password || ''), acc.passwordHash);
+        if (!ok) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+        req.session.userId = acc.id;
+        const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
+        res.json({ success: true, user: buildPublicUserFromAccount(acc, plan) });
+    } catch (e) {
+        console.error('[login-password]', e);
+        res.status(500).json({ error: e.message || 'Login failed' });
+    }
+});
+
+app.post('/api/auth/login-code', async (req, res) => {
+    try {
+        const { email, code } = req.body || {};
+        const em = accounts.normalizeEmail(email);
+        const acc = accounts.findByEmail(em);
+        if (!acc) {
+            return res.status(401).json({ error: 'Invalid email or code' });
+        }
+        if (!verifyOtp(em, 'login', code)) {
+            return res.status(401).json({ error: 'Invalid or expired verification code' });
+        }
+        req.session.userId = acc.id;
+        const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
+        res.json({ success: true, user: buildPublicUserFromAccount(acc, plan) });
+    } catch (e) {
+        console.error('[login-code]', e);
+        res.status(500).json({ error: e.message || 'Login failed' });
+    }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+    try {
+        const { email, code, newPassword } = req.body || {};
+        const em = accounts.normalizeEmail(email);
+        const acc = accounts.findByEmail(em);
+        if (!acc) {
+            return res.status(400).json({ error: 'Email not registered' });
+        }
+        if (!verifyOtp(em, 'reset_password', code)) {
+            return res.status(400).json({ error: 'Invalid or expired verification code' });
+        }
+        const pw = String(newPassword || '');
+        if (pw.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
+        const passwordHash = await bcrypt.hash(pw, 10);
+        accounts.updateUser(acc.id, { passwordHash });
+        req.session.userId = acc.id;
+        const next = accounts.findById(acc.id);
+        const plan = SUBSCRIPTION_PLANS[next.plan] || SUBSCRIPTION_PLANS.free;
+        res.json({ success: true, user: buildPublicUserFromAccount(next, plan) });
+    } catch (e) {
+        console.error('[reset-password]', e);
+        res.status(500).json({ error: e.message || 'Reset failed' });
+    }
+});
+
+// 旧版邀请码（仅 users.json，供脚本或未迁移账号）
 app.post('/api/auth', (req, res) => {
     const { accessCode } = req.body;
-    
+
     if (!accessCode) {
         return res.status(400).json({ error: 'Access code is required' });
     }
-    
+
     const user = authenticateUser(accessCode);
-    
+
     if (!user) {
         return res.status(401).json({ error: 'Invalid access code' });
     }
-    
+
     res.json({
         success: true,
         user: user
@@ -1040,20 +1389,15 @@ async function waitForCompletionStream(promptId, onProgress, timeout = 300000) {
 // API: 文字生成图片（四宫格并行模式）
 app.post('/api/generate-grid', async (req, res) => {
     try {
-        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1, accessCode } = req.body;
-        
-        if (!accessCode) {
-            return res.status(401).json({ error: 'Access code is required' });
+        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1 } = req.body;
+
+        const auth = resolveAuth(req);
+        if (!auth) {
+            return res.status(401).json({ error: 'Login or access code required' });
         }
-        
-        // 验证用户
-        const user = authenticateUser(accessCode);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid access code' });
-        }
-        
+
         // 检查并扣除积分（生成4张图片，消耗4倍积分）
-        const creditResult = deductCredits(accessCode, 'generate');
+        const creditResult = deductCreditsAuth(auth, 'generate');
         if (!creditResult.success) {
             return res.status(402).json({ 
                 error: creditResult.error,
@@ -1064,7 +1408,7 @@ app.post('/api/generate-grid', async (req, res) => {
         
         // 再扣除3次（总共4次）
         for (let i = 0; i < 3; i++) {
-            const extraCredit = deductCredits(accessCode, 'generate');
+            const extraCredit = deductCreditsAuth(auth, 'generate');
             if (!extraCredit.success) {
                 return res.status(402).json({ 
                     error: 'Insufficient credits for 4 images',
@@ -1138,20 +1482,15 @@ app.post('/api/generate-grid', async (req, res) => {
 // API: 文字生成图片（原单张模式，保持向后兼容）
 app.post('/api/generate', async (req, res) => {
     try {
-        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1, accessCode } = req.body;
-        
-        if (!accessCode) {
-            return res.status(401).json({ error: 'Access code is required' });
+        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1 } = req.body;
+
+        const auth = resolveAuth(req);
+        if (!auth) {
+            return res.status(401).json({ error: 'Login or access code required' });
         }
-        
-        // 验证用户
-        const user = authenticateUser(accessCode);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid access code' });
-        }
-        
+
         // 检查并扣除积分
-        const creditResult = deductCredits(accessCode, 'generate');
+        const creditResult = deductCreditsAuth(auth, 'generate');
         if (!creditResult.success) {
             return res.status(402).json({ 
                 error: creditResult.error,
@@ -1219,20 +1558,15 @@ app.post('/api/generate', async (req, res) => {
 // API: 文字生成图片（流式SSE版本）
 app.post('/api/generate-stream', async (req, res) => {
     try {
-        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1, accessCode } = req.body;
-        
-        if (!accessCode) {
-            return res.status(401).json({ error: 'Access code is required' });
+        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1 } = req.body;
+
+        const auth = resolveAuth(req);
+        if (!auth) {
+            return res.status(401).json({ error: 'Login or access code required' });
         }
-        
-        // 验证用户
-        const user = authenticateUser(accessCode);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid access code' });
-        }
-        
+
         // 检查并扣除积分
-        const creditResult = deductCredits(accessCode, 'generate');
+        const creditResult = deductCreditsAuth(auth, 'generate');
         if (!creditResult.success) {
             return res.status(402).json({ 
                 error: creditResult.error,
@@ -1342,20 +1676,15 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'No image uploaded' });
         }
         
-        const { prompt, accessCode, workflowTemplate } = req.body;
-        
-        if (!accessCode) {
-            return res.status(401).json({ error: 'Access code is required' });
+        const { prompt, workflowTemplate } = req.body;
+
+        const auth = resolveAuth(req);
+        if (!auth) {
+            return res.status(401).json({ error: 'Login or access code required' });
         }
-        
-        // 验证用户
-        const user = authenticateUser(accessCode);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid access code' });
-        }
-        
-        // 检查并扣除积分
-        const creditResult = deductCredits(accessCode, 'edit');
+
+        const creditOp = getEditCreditOperationKey(workflowTemplate);
+        const creditResult = deductCreditsAuth(auth, creditOp);
         if (!creditResult.success) {
             return res.status(402).json({ 
                 error: creditResult.error,
@@ -1427,20 +1756,15 @@ app.post('/api/edit-stream', upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'No image uploaded' });
         }
         
-        const { prompt, accessCode, workflowTemplate } = req.body;
-        
-        if (!accessCode) {
-            return res.status(401).json({ error: 'Access code is required' });
+        const { prompt, workflowTemplate } = req.body;
+
+        const auth = resolveAuth(req);
+        if (!auth) {
+            return res.status(401).json({ error: 'Login or access code required' });
         }
-        
-        // 验证用户
-        const user = authenticateUser(accessCode);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid access code' });
-        }
-        
-        // 检查并扣除积分
-        const creditResult = deductCredits(accessCode, 'edit');
+
+        const creditOp = getEditCreditOperationKey(workflowTemplate);
+        const creditResult = deductCreditsAuth(auth, creditOp);
         if (!creditResult.success) {
             return res.status(402).json({ 
                 error: creditResult.error,
@@ -1607,5 +1931,8 @@ app.listen(PORT, '0.0.0.0', () => {
         console.log('Network: (未发现非回环 IPv4，请用 ip addr 查看本机地址)');
     }
     console.log(`ComfyUI: ${COMFYUI_URL}`);
+    console.log(
+        `Auth: POST /api/auth/send-code | register | login-password | login-code | reset-password | GET /api/auth/me`
+    );
     console.log(`================================\n`);
 });

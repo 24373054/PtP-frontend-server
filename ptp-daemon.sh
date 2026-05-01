@@ -17,6 +17,33 @@ is_running() {
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
 }
 
+# 释放本机 PORT 上的 TCP 监听（解决：旧 node 仍占 38024 → 新进程 EADDRINUSE → 浏览器仍打到旧版、/api/auth 返回 HTML）
+free_port_tcp() {
+  local port="$1"
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k "${port}/tcp" 2>/dev/null || true
+    sleep 0.6
+    return 0
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    local pids
+    pids="$(lsof -ti TCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -n "${pids}" ]]; then
+      # shellcheck disable=SC2086
+      kill -TERM ${pids} 2>/dev/null || true
+      sleep 1
+      pids="$(lsof -ti TCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+      if [[ -n "${pids}" ]]; then
+        # shellcheck disable=SC2086
+        kill -KILL ${pids} 2>/dev/null || true
+      fi
+    fi
+    sleep 0.3
+    return 0
+  fi
+  echo "提示: 未找到 fuser/lsof，若重启后仍 EADDRINUSE，请手动结束占用 ${port} 的进程。" >&2
+}
+
 cmd_start() {
   if [[ -f "$PIDFILE" ]]; then
     local old
@@ -29,6 +56,9 @@ cmd_start() {
   fi
 
   touch "$LOGFILE"
+  # nohup 写入的 PID 有时是 conda 包装进程，与真正 listen 的 node 不一致；启动前清端口避免旧实例占坑
+  free_port_tcp "$PORT"
+
   if [[ -n "${PTP_NODE:-}" ]]; then
     nohup "$PTP_NODE" "$ROOT/server.js" >>"$LOGFILE" 2>&1 &
   elif [[ -n "$CONDA_ENV_EFFECTIVE" ]]; then
@@ -79,6 +109,7 @@ cmd_stop() {
     kill -KILL "$pid" 2>/dev/null || true
   fi
   rm -f "$PIDFILE"
+  free_port_tcp "$PORT"
   echo "已停止。"
 }
 
@@ -127,6 +158,8 @@ usage() {
   echo "  PTP_NODE         若设置则优先使用该可执行文件启动 server.js，忽略 conda"
   echo "  PTP_LOG          日志路径，默认 \$ROOT/ptp-daemon.log"
   echo "  PTP_PIDFILE      PID 路径，默认 \$ROOT/.ptp.pid"
+  echo ""
+  echo "说明: start/stop 时会尝试释放 \$PTP_PORT 上的监听进程，避免旧 node 占坑导致新代码无法加载。"
 }
 
 case "${1:-}" in

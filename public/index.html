@@ -15,14 +15,69 @@
 </head>
 <body>
     <div id="authOverlay" class="auth-overlay">
-        <div class="auth-modal">
-            <h2 data-i18n="auth.title">Access Code Required</h2>
-            <p data-i18n="auth.description">Enter the beta access code to continue</p>
-            <input type="password" id="accessCode" data-i18n-placeholder="auth.placeholder" placeholder="Enter access code" autocomplete="off">
-            <button class="btn-primary" id="submitCode">
-                <span class="btn-text" data-i18n="auth.submit">Submit</span>
-            </button>
-            <div class="error-message hidden" id="errorMessage" data-i18n="auth.error">Invalid access code</div>
+        <div class="auth-modal auth-modal--wide">
+            <div class="auth-modal-toolbar">
+                <button
+                    type="button"
+                    class="lang-switch auth-lang-switch"
+                    id="authLangSwitch"
+                    aria-label="Switch language"
+                >
+                    <span class="lang-text">English</span>
+                </button>
+            </div>
+            <h2 data-i18n="auth.title">登录</h2>
+            <p class="auth-lead" data-i18n="auth.lead">使用邮箱注册或登录；支持密码与验证码两种方式。</p>
+            <div class="error-message hidden" id="errorMessage" role="alert"></div>
+            <div class="auth-tabs" role="tablist">
+                <button type="button" class="auth-tab auth-tab--active" data-auth-tab="login" data-i18n="auth.tabLogin">登录</button>
+                <button type="button" class="auth-tab" data-auth-tab="register" data-i18n="auth.tabRegister">注册</button>
+                <button type="button" class="auth-tab" data-auth-tab="forgot" data-i18n="auth.tabForgot">找回密码</button>
+            </div>
+            <div id="authPanelLogin" class="auth-panel">
+                <label class="auth-field"><span data-i18n="auth.email">邮箱</span><input type="email" id="loginEmail" autocomplete="username"></label>
+                <div class="auth-inline">
+                    <button type="button" class="auth-chip auth-chip--active" data-login-mode="password" data-i18n="auth.modePassword">密码登录</button>
+                    <button type="button" class="auth-chip" data-login-mode="code" data-i18n="auth.modeCode">验证码登录</button>
+                </div>
+                <div id="loginBlockPassword">
+                    <label class="auth-field"><span data-i18n="auth.password">密码</span><input type="password" id="loginPassword" autocomplete="current-password"></label>
+                </div>
+                <div id="loginBlockCode" class="hidden">
+                    <label class="auth-field"><span data-i18n="auth.code">验证码</span><input type="text" id="loginCode" inputmode="numeric" autocomplete="one-time-code"></label>
+                    <button type="button" class="btn-secondary btn-send-code" id="btnSendLoginCode" data-i18n="auth.sendCode">发送验证码</button>
+                </div>
+                <button type="button" class="btn-primary" id="btnSubmitLogin"><span class="btn-text" data-i18n="auth.login">登录</span></button>
+            </div>
+            <div id="authPanelRegister" class="auth-panel hidden">
+                <label class="auth-field"><span data-i18n="auth.email">邮箱</span><input type="email" id="regEmail" autocomplete="email"></label>
+                <label class="auth-field"><span data-i18n="auth.username">用户名</span><input type="text" id="regUsername" maxlength="32" autocomplete="username"></label>
+                <label class="auth-field"><span data-i18n="auth.password">密码</span><input type="password" id="regPassword" autocomplete="new-password" minlength="8"></label>
+                <label class="auth-field"><span data-i18n="auth.code">验证码</span><input type="text" id="regCode" inputmode="numeric"></label>
+                <button type="button" class="btn-secondary btn-send-code" id="btnSendRegCode" data-i18n="auth.sendRegCode">发送注册验证码</button>
+                <button type="button" class="btn-primary" id="btnSubmitRegister"><span class="btn-text" data-i18n="auth.register">注册</span></button>
+                <p class="auth-hint" data-i18n="auth.registerBonus">新用户注册成功后赠送 30 积分。</p>
+            </div>
+            <div id="authPanelForgot" class="auth-panel hidden">
+                <label class="auth-field"><span data-i18n="auth.email">邮箱</span><input type="email" id="forgotEmail" autocomplete="email"></label>
+                <label class="auth-field"><span data-i18n="auth.code">验证码</span><input type="text" id="forgotCode" inputmode="numeric"></label>
+                <button type="button" class="btn-secondary btn-send-code" id="btnSendForgotCode" data-i18n="auth.sendResetCode">发送重置验证码</button>
+                <label class="auth-field"><span data-i18n="auth.newPassword">新密码</span><input type="password" id="forgotNewPassword" minlength="8" autocomplete="new-password"></label>
+                <button type="button" class="btn-primary" id="btnSubmitForgot"><span class="btn-text" data-i18n="auth.resetPassword">重置密码</span></button>
+            </div>
+            <details class="auth-legacy">
+                <summary data-i18n="auth.legacyToggle">使用旧版邀请码</summary>
+                <label class="auth-field"><span data-i18n="auth.legacyCode">邀请码</span><input type="password" id="accessCode" autocomplete="off"></label>
+                <button type="button" class="btn-secondary" id="submitCode"><span class="btn-text" data-i18n="auth.legacySubmit">提交邀请码</span></button>
+            </details>
+        </div>
+    </div>
+
+    <div id="cookieConsentOverlay" class="cookie-consent-overlay hidden" role="dialog" aria-labelledby="cookieConsentTitle">
+        <div class="cookie-consent-card">
+            <h3 id="cookieConsentTitle" data-i18n="cookies.title">Cookie 与隐私</h3>
+            <p data-i18n="cookies.body">我们使用必要的会话 Cookie 保持登录状态。继续使用即表示您了解并同意。</p>
+            <button type="button" class="btn-primary" id="cookieConsentAccept" data-i18n="cookies.accept">同意并继续</button>
         </div>
     </div>
 
@@ -74,6 +129,7 @@
                         <i class="ph-bold ph-lightning"></i>
                         <span class="credits-count" id="creditsCount">0</span>
                     </div>
+                    <button type="button" class="btn-logout" id="logoutBtn" data-i18n="auth.logout">退出</button>
                 </div>
                 <div class="status" id="status">
                     <span class="dot"></span>

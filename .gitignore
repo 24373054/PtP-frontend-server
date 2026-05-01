@@ -1,6 +1,8 @@
 node_modules/
 uploads/
 outputs/
+accounts.json
+email/邮箱.txt
 # Full-size demo PNGs from tools/generate-jewelry-demos.mjs (thumbs only in git)
 public/assets/jewelry-demo/*.png
 *.log

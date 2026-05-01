@@ -3,6 +3,9 @@ const authOverlay = document.getElementById('authOverlay');
 const accessCodeInput = document.getElementById('accessCode');
 const submitCodeBtn = document.getElementById('submitCode');
 const errorMessage = document.getElementById('errorMessage');
+const cookieConsentOverlay = document.getElementById('cookieConsentOverlay');
+const cookieConsentAccept = document.getElementById('cookieConsentAccept');
+const logoutBtn = document.getElementById('logoutBtn');
 
 // Custom alert elements
 const customAlertOverlay = document.getElementById('customAlertOverlay');
@@ -96,6 +99,11 @@ function apiUrl(path) {
     const b = getPtpApiBase();
     if (!b) return p;
     return `${b.replace(/\/$/, '')}${p}`;
+}
+
+/** 携带 Cookie 会话（邮箱登录）；与 apiUrl 同域时使用 */
+function apiFetch(url, options = {}) {
+    return fetch(url, { ...options, credentials: 'include' });
 }
 
 /**
@@ -508,11 +516,39 @@ const i18n = {
         'status.offline': 'Offline',
         'tabs.edit': 'Edit Image',
         'tabs.generate': 'Generate Image',
-        'auth.title': 'Access Code Required',
-        'auth.description': 'Enter the beta access code to continue',
-        'auth.placeholder': 'Enter access code',
+        'auth.title': 'Sign in',
+        'auth.lead': 'Register or sign in with email. Password or verification code.',
+        'auth.tabLogin': 'Sign in',
+        'auth.tabRegister': 'Register',
+        'auth.tabForgot': 'Reset password',
+        'auth.email': 'Email',
+        'auth.username': 'Username',
+        'auth.password': 'Password',
+        'auth.newPassword': 'New password',
+        'auth.code': 'Verification code',
+        'auth.modePassword': 'Password',
+        'auth.modeCode': 'Email code',
+        'auth.sendCode': 'Send login code',
+        'auth.sendRegCode': 'Send registration code',
+        'auth.sendResetCode': 'Send reset code',
+        'auth.login': 'Sign in',
+        'auth.register': 'Create account',
+        'auth.resetPassword': 'Reset password',
+        'auth.registerBonus': 'New accounts receive 30 credits.',
+        'auth.logout': 'Log out',
+        'auth.legacyToggle': 'Legacy invite code',
+        'auth.legacyCode': 'Invite code',
+        'auth.legacySubmit': 'Submit code',
+        'auth.placeholder': 'Invite code',
         'auth.submit': 'Submit',
-        'auth.error': 'Invalid access code',
+        'auth.error': 'Something went wrong',
+        'auth.needEmail': 'Please enter a valid email address first.',
+        'auth.serverHtmlError':
+            'API returned HTML (route missing). Use the same host:port as this page, run `node server.js` from the latest PtP-frontend-server, then restart the process.',
+        'cookies.title': 'Cookies & session',
+        'cookies.body':
+            'We use a session cookie to keep you signed in. By continuing you accept this use.',
+        'cookies.accept': 'Accept and continue',
         'credits.cost': 'Cost:',
         'credits.unit': 'credits',
         'credits.insufficient': 'Insufficient credits. Please upgrade your plan.',
@@ -666,11 +702,39 @@ const i18n = {
         'status.offline': '离线',
         'tabs.edit': '编辑图片',
         'tabs.generate': '生成图片',
-        'auth.title': '需要访问码',
-        'auth.description': '请输入内测访问码以继续',
-        'auth.placeholder': '输入访问码',
+        'auth.title': '登录',
+        'auth.lead': '使用邮箱注册或登录；支持密码与邮箱验证码两种方式。',
+        'auth.tabLogin': '登录',
+        'auth.tabRegister': '注册',
+        'auth.tabForgot': '找回密码',
+        'auth.email': '邮箱',
+        'auth.username': '用户名',
+        'auth.password': '密码',
+        'auth.newPassword': '新密码',
+        'auth.code': '验证码',
+        'auth.modePassword': '密码登录',
+        'auth.modeCode': '验证码登录',
+        'auth.sendCode': '发送登录验证码',
+        'auth.sendRegCode': '发送注册验证码',
+        'auth.sendResetCode': '发送重置验证码',
+        'auth.login': '登录',
+        'auth.register': '注册',
+        'auth.resetPassword': '重置密码',
+        'auth.registerBonus': '首次注册成功后赠送 30 积分。',
+        'auth.logout': '退出',
+        'auth.legacyToggle': '使用旧版邀请码',
+        'auth.legacyCode': '邀请码',
+        'auth.legacySubmit': '提交邀请码',
+        'auth.placeholder': '邀请码',
         'auth.submit': '提交',
-        'auth.error': '访问码无效',
+        'auth.error': '操作失败，请检查输入或稍后重试',
+        'auth.needEmail': '请先填写有效邮箱地址。',
+        'auth.serverHtmlError':
+            '接口返回了网页而不是 JSON：多半是 38024 上仍是旧版 Node，或新进程因端口被占用没起来。请执行 `./ptp-daemon.sh restart`（脚本会释放端口），并查看 `ptp-daemon.log` 是否还有 EADDRINUSE。',
+        'cookies.title': 'Cookie 与隐私',
+        'cookies.body':
+            '我们使用必要的会话 Cookie 保持您的登录状态。点击同意即表示您了解并继续。',
+        'cookies.accept': '同意并继续',
         'credits.cost': '消耗：',
         'credits.unit': '积分',
         'credits.insufficient': '积分不足，请升级订阅方案',
@@ -1190,7 +1254,7 @@ function renderBatchFileList() {
     });
     if (runBtn) {
         runBtn.disabled =
-            batchQueue.length === 0 || !hasValidEditPromptCore() || !currentAccessCode;
+            batchQueue.length === 0 || !hasValidEditPromptCore() || !currentUser;
     }
 }
 
@@ -1360,7 +1424,7 @@ function closeHistoryModal() {
 async function loadForgePresets() {
     let raw = null;
     try {
-        const r = await fetch(apiUrl('/api/presets'));
+        const r = await apiFetch(apiUrl('/api/presets'));
         if (r.ok) raw = await r.json();
     } catch (_) {
         raw = null;
@@ -1374,7 +1438,7 @@ async function loadForgePresets() {
         raw.jewelryScenePacks.length === 0;
     if (jewelryLooksEmpty) {
         try {
-            const r2 = await fetch(apiUrl('/workflows/presets.json'));
+            const r2 = await apiFetch(apiUrl('/workflows/presets.json'));
             if (r2.ok) {
                 const alt = await r2.json();
                 if (
@@ -1529,7 +1593,7 @@ async function runHealthToPanel() {
     if (!settingsHealthOut) return;
     settingsHealthOut.textContent = '…';
     try {
-        const r = await fetch(apiUrl('/api/health'));
+        const r = await apiFetch(apiUrl('/api/health'));
         const j = await r.json();
         settingsHealthOut.textContent = JSON.stringify(j, null, 2);
     } catch (e) {
@@ -1598,9 +1662,14 @@ function switchLanguage(lang) {
         }
     });
     
-    // 更新语言切换按钮文本
+    // 更新语言切换按钮文本（顶栏 + 登录弹窗内）
+    const langLabel = lang === 'en' ? '中文' : 'English';
     const langSwitch = document.getElementById('langSwitch');
-    langSwitch.querySelector('.lang-text').textContent = lang === 'en' ? '中文' : 'English';
+    const langTextMain = langSwitch && langSwitch.querySelector('.lang-text');
+    if (langTextMain) langTextMain.textContent = langLabel;
+    const authLangSwitch = document.getElementById('authLangSwitch');
+    const langTextAuth = authLangSwitch && authLangSwitch.querySelector('.lang-text');
+    if (langTextAuth) langTextAuth.textContent = langLabel;
     
     // 更新下载按钮文本（移动端显示"保存到相册"）
     updateDownloadButtonText();
@@ -1656,42 +1725,44 @@ function updateDownloadButtonText() {
 const savedLang = localStorage.getItem('preferred_lang') || 'en';
 currentLang = savedLang;
 
-// 内测码验证
 const AUTH_KEY = 'ptp_auth_token';
 
-function checkAuth() {
-    const token = sessionStorage.getItem(AUTH_KEY);
-    if (token) {
-        currentAccessCode = token;
-        return authenticateUser(token);
-    }
-    return false;
+function setAuthError(msg) {
+    if (!errorMessage) return;
+    errorMessage.textContent =
+        msg || (i18n[currentLang] && i18n[currentLang]['auth.error']) || 'Error';
+    errorMessage.classList.remove('hidden');
 }
 
-// 用户认证
-async function authenticateUser(accessCode) {
+function clearAuthError() {
+    if (errorMessage) errorMessage.classList.add('hidden');
+}
+
+/** 登录/Cookie 弹窗打开时禁止背景页滚动（不依赖 :has） */
+function syncModalScrollLock() {
+    const authOpen = authOverlay && !authOverlay.classList.contains('hidden');
+    const cookieOpen =
+        cookieConsentOverlay && !cookieConsentOverlay.classList.contains('hidden');
+    document.documentElement.classList.toggle('modal-scroll-lock', !!(authOpen || cookieOpen));
+}
+
+async function authenticateWithInviteCode(accessCode) {
     try {
-        const response = await fetch(apiUrl('/api/auth'), {
+        const response = await apiFetch(apiUrl('/api/auth'), {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ accessCode })
         });
-        
-        if (!response.ok) {
-            return false;
-        }
-        
+        if (!response.ok) return false;
         const data = await response.json();
         if (data.success) {
             currentUser = data.user;
             currentAccessCode = accessCode;
             updateUserInfo();
             authOverlay.classList.add('hidden');
+            syncModalScrollLock();
             return true;
         }
-        
         return false;
     } catch (error) {
         console.error('Authentication failed:', error);
@@ -1699,27 +1770,62 @@ async function authenticateUser(accessCode) {
     }
 }
 
-// 更新用户信息显示
+async function restoreAuth() {
+    try {
+        const r = await apiFetch(apiUrl('/api/auth/me'));
+        if (r.ok) {
+            const d = await r.json();
+            if (d.success && d.user) {
+                currentUser = d.user;
+                currentAccessCode = null;
+                updateUserInfo();
+                authOverlay.classList.add('hidden');
+                syncModalScrollLock();
+                return true;
+            }
+        }
+    } catch (_) {}
+    const token = sessionStorage.getItem(AUTH_KEY);
+    if (token) {
+        currentAccessCode = token;
+        return authenticateWithInviteCode(token);
+    }
+    return false;
+}
+
+function getEditCreditLabelAmount() {
+    if (!currentUser || !currentUser.creditCost) return null;
+    const cc = currentUser.creditCost;
+    if (currentUser.plan === 'beta' || cc.edit === 0) return null;
+    if (!isJewelryIntent()) return cc.edit;
+    const wt = EDIT_WORKFLOW_TEMPLATE[editIntentTask];
+    const map = {
+        jewelry_retouch: 'jewelry_retouch',
+        jewelry_product_cutout: 'jewelry_cutout',
+        jewelry_scene: 'jewelry_scene',
+        jewelry_macro_detail: 'jewelry_macro'
+    };
+    const k = map[wt] || 'edit';
+    return cc[k] != null ? cc[k] : cc.edit;
+}
+
 function updateUserInfo() {
     if (!currentUser) return;
-    
+
     userName.textContent = currentUser.username;
     userPlan.textContent = currentUser.planName;
     creditsCount.textContent = currentUser.credits;
-    
-    // 显示用户信息
+
     userInfo.classList.remove('hidden');
-    
-    // 更新按钮上的积分消耗显示
+
     if (currentUser.creditCost) {
         const creditUnit = currentLang === 'zh' ? '积分' : 'credits';
-        
-        // Beta用户或免费用户不显示积分消耗
         if (currentUser.plan === 'beta' || currentUser.creditCost.edit === 0) {
             editBtnCredit.classList.add('hidden');
             generateBtnCredit.classList.add('hidden');
         } else {
-            editBtnCredit.textContent = `~ ${currentUser.creditCost.edit} ${creditUnit}`;
+            const editAmt = getEditCreditLabelAmount();
+            editBtnCredit.textContent = `~ ${editAmt} ${creditUnit}`;
             generateBtnCredit.textContent = `~ ${currentUser.creditCost.generate} ${creditUnit}`;
             editBtnCredit.classList.remove('hidden');
             generateBtnCredit.classList.remove('hidden');
@@ -1727,12 +1833,11 @@ function updateUserInfo() {
     }
 }
 
-// 加载订阅方案
 async function loadPlans() {
     try {
-        const response = await fetch(apiUrl(`/api/plans?lang=${currentLang}`));
+        const response = await apiFetch(apiUrl(`/api/plans?lang=${currentLang}`));
         const data = await response.json();
-        
+
         if (data.plans) {
             renderPlans(data.plans);
         }
@@ -1741,22 +1846,36 @@ async function loadPlans() {
     }
 }
 
-// 渲染订阅方案
 function renderPlans(plans) {
     plansGrid.innerHTML = '';
-    
-    plans.forEach(plan => {
+
+    plans.forEach((plan) => {
         const planCard = document.createElement('div');
         planCard.className = 'plan-card';
-        
+
         if (currentUser && currentUser.plan === plan.id) {
             planCard.classList.add('current');
         }
-        
+
         const isCurrent = currentUser && currentUser.plan === plan.id;
         const editLabel = currentLang === 'zh' ? '编辑' : 'Edit';
         const generateLabel = currentLang === 'zh' ? '生成' : 'Generate';
-        
+        const cc = plan.creditCost || {};
+        const zh = currentLang === 'zh';
+        const jewel = [];
+        if (cc.jewelry_retouch != null) {
+            jewel.push(`${zh ? '珠宝精修' : 'Jewelry polish'}: ${cc.jewelry_retouch}`);
+        }
+        if (cc.jewelry_cutout != null) {
+            jewel.push(`${zh ? '抠图白底' : 'Cutout'}: ${cc.jewelry_cutout}`);
+        }
+        if (cc.jewelry_scene != null) {
+            jewel.push(`${zh ? '场景合成' : 'Scene'}: ${cc.jewelry_scene}`);
+        }
+        if (cc.jewelry_macro != null) {
+            jewel.push(`${zh ? '微距细节' : 'Macro'}: ${cc.jewelry_macro}`);
+        }
+
         planCard.innerHTML = `
             <div class="plan-header">
                 <h3>${plan.name}</h3>
@@ -1772,63 +1891,309 @@ function renderPlans(plans) {
             <div class="plan-cost">
                 <span>${editLabel}: ${plan.creditCost.edit} ${i18n[currentLang]['credits.unit']}</span>
                 <span>${generateLabel}: ${plan.creditCost.generate} ${i18n[currentLang]['credits.unit']}</span>
+                ${
+                    jewel.length
+                        ? `<div class="plan-jewelry-cost">${jewel.join(' · ')}</div>`
+                        : ''
+                }
             </div>
             <ul class="plan-features">
-                ${plan.features.map(f => `<li>${f}</li>`).join('')}
+                ${plan.features.map((f) => `<li>${f}</li>`).join('')}
             </ul>
             <button class="plan-btn ${isCurrent ? 'current' : ''}" 
                     ${isCurrent ? 'disabled' : ''}>
                 ${isCurrent ? i18n[currentLang]['plans.current'] : i18n[currentLang]['plans.upgrade']}
             </button>
         `;
-        
+
         plansGrid.appendChild(planCard);
     });
-    
+
     plansSection.classList.remove('hidden');
 }
 
-submitCodeBtn.addEventListener('click', async () => {
-    const code = accessCodeInput.value.trim();
-    if (!code) {
-        errorMessage.classList.remove('hidden');
-        return;
-    }
-    
-    const success = await authenticateUser(code);
-    if (success) {
-        sessionStorage.setItem(AUTH_KEY, code);
-        errorMessage.classList.add('hidden');
-        checkHealth();
-        loadPlans();
-        loadForgePresets();
-    } else {
-        errorMessage.classList.remove('hidden');
-        accessCodeInput.value = '';
-        accessCodeInput.focus();
-    }
-});
+let loginMode = 'password';
 
-accessCodeInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-        submitCodeBtn.click();
+async function sendAuthOtp(email, purpose) {
+    const em = String(email || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+        throw new Error(
+            (i18n[currentLang] && i18n[currentLang]['auth.needEmail']) || 'Enter a valid email'
+        );
     }
-});
-
-// 页面加载时检查认证
-if (!checkAuth()) {
-    accessCodeInput.focus();
-} else {
-    checkHealth();
-    loadPlans();
-    loadForgePresets();
+    const langKey = currentLang === 'zh' ? 'zh' : 'en';
+    const r = await apiFetch(apiUrl('/api/auth/send-code'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: em, purpose, lang: langKey })
+    });
+    const text = await r.text();
+    let j = {};
+    try {
+        j = text ? JSON.parse(text) : {};
+    } catch (_) {
+        const hint =
+            (i18n[currentLang] && i18n[currentLang]['auth.serverHtmlError']) ||
+            'Server returned non-JSON. Restart Node with the latest server.js on the same port as this page.';
+        if (
+            /cannot post\s+\/api\/auth\/send-code/i.test(text) ||
+            /<!DOCTYPE\s+html/i.test(text)
+        ) {
+            throw new Error(hint);
+        }
+        throw new Error(text ? text.slice(0, 200) : 'Invalid server response');
+    }
+    if (!r.ok) throw new Error(j.error || `send failed (${r.status})`);
 }
 
-// 语言切换
-document.getElementById('langSwitch').addEventListener('click', () => {
-    const newLang = currentLang === 'en' ? 'zh' : 'en';
-    switchLanguage(newLang);
-});
+function scrollAuthModalTop() {
+    const modal = document.querySelector('.auth-overlay .auth-modal');
+    if (modal) modal.scrollTop = 0;
+    if (authOverlay) authOverlay.scrollTop = 0;
+}
+
+function wireAuthForms() {
+    if (!authOverlay || authOverlay.dataset.authFormsWired === '1') return;
+    authOverlay.dataset.authFormsWired = '1';
+
+    authOverlay.querySelectorAll('[data-auth-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            authOverlay.querySelectorAll('[data-auth-tab]').forEach((b) => {
+                b.classList.toggle('auth-tab--active', b === btn);
+            });
+            const t = btn.getAttribute('data-auth-tab');
+            const panelLogin = document.getElementById('authPanelLogin');
+            const panelReg = document.getElementById('authPanelRegister');
+            const panelForgot = document.getElementById('authPanelForgot');
+            if (panelLogin) panelLogin.classList.toggle('hidden', t !== 'login');
+            if (panelReg) panelReg.classList.toggle('hidden', t !== 'register');
+            if (panelForgot) panelForgot.classList.toggle('hidden', t !== 'forgot');
+            clearAuthError();
+            scrollAuthModalTop();
+        });
+    });
+
+    authOverlay.querySelectorAll('[data-login-mode]').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            loginMode = chip.getAttribute('data-login-mode') || 'password';
+            authOverlay.querySelectorAll('[data-login-mode]').forEach((c) => {
+                c.classList.toggle('auth-chip--active', c === chip);
+            });
+            const bp = document.getElementById('loginBlockPassword');
+            const bc = document.getElementById('loginBlockCode');
+            if (bp) bp.classList.toggle('hidden', loginMode !== 'password');
+            if (bc) bc.classList.toggle('hidden', loginMode !== 'code');
+        });
+    });
+
+    document.getElementById('btnSendLoginCode')?.addEventListener('click', async () => {
+        const btn = document.getElementById('btnSendLoginCode');
+        const email = document.getElementById('loginEmail')?.value.trim();
+        try {
+            clearAuthError();
+            if (btn) btn.disabled = true;
+            await sendAuthOtp(email, 'login');
+            showToast(currentLang === 'zh' ? '验证码已发送' : 'Code sent');
+        } catch (e) {
+            setAuthError(e.message);
+            scrollAuthModalTop();
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    });
+
+    document.getElementById('btnSendRegCode')?.addEventListener('click', async () => {
+        const btn = document.getElementById('btnSendRegCode');
+        const email = document.getElementById('regEmail')?.value.trim();
+        try {
+            clearAuthError();
+            if (btn) btn.disabled = true;
+            await sendAuthOtp(email, 'register');
+            showToast(currentLang === 'zh' ? '验证码已发送' : 'Code sent');
+        } catch (e) {
+            setAuthError(e.message);
+            scrollAuthModalTop();
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    });
+
+    document.getElementById('btnSendForgotCode')?.addEventListener('click', async () => {
+        const btn = document.getElementById('btnSendForgotCode');
+        const email = document.getElementById('forgotEmail')?.value.trim();
+        try {
+            clearAuthError();
+            if (btn) btn.disabled = true;
+            await sendAuthOtp(email, 'reset_password');
+            showToast(currentLang === 'zh' ? '验证码已发送' : 'Code sent');
+        } catch (e) {
+            setAuthError(e.message);
+            scrollAuthModalTop();
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    });
+
+    document.getElementById('btnSubmitLogin')?.addEventListener('click', async () => {
+        const email = document.getElementById('loginEmail')?.value.trim();
+        clearAuthError();
+        try {
+            if (loginMode === 'password') {
+                const password = document.getElementById('loginPassword')?.value || '';
+                const r = await apiFetch(apiUrl('/api/auth/login-password'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(d.error || 'login failed');
+                sessionStorage.removeItem(AUTH_KEY);
+                currentUser = d.user;
+                currentAccessCode = null;
+                updateUserInfo();
+                authOverlay.classList.add('hidden');
+                syncModalScrollLock();
+                checkHealth();
+                loadPlans();
+                loadForgePresets();
+            } else {
+                const code = document.getElementById('loginCode')?.value.trim() || '';
+                const r = await apiFetch(apiUrl('/api/auth/login-code'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, code })
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(d.error || 'login failed');
+                sessionStorage.removeItem(AUTH_KEY);
+                currentUser = d.user;
+                currentAccessCode = null;
+                updateUserInfo();
+                authOverlay.classList.add('hidden');
+                syncModalScrollLock();
+                checkHealth();
+                loadPlans();
+                loadForgePresets();
+            }
+        } catch (e) {
+            setAuthError(e.message);
+            scrollAuthModalTop();
+        }
+    });
+
+    document.getElementById('btnSubmitRegister')?.addEventListener('click', async () => {
+        const email = document.getElementById('regEmail')?.value.trim();
+        const username = document.getElementById('regUsername')?.value.trim();
+        const password = document.getElementById('regPassword')?.value || '';
+        const code = document.getElementById('regCode')?.value.trim() || '';
+        clearAuthError();
+        try {
+            const r = await apiFetch(apiUrl('/api/auth/register'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email,
+                    username,
+                    password,
+                    code,
+                    lang: currentLang
+                })
+            });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.error || 'register failed');
+            sessionStorage.removeItem(AUTH_KEY);
+            currentUser = d.user;
+            currentAccessCode = null;
+            updateUserInfo();
+            authOverlay.classList.add('hidden');
+            syncModalScrollLock();
+            checkHealth();
+            loadPlans();
+            loadForgePresets();
+        } catch (e) {
+            setAuthError(e.message);
+            scrollAuthModalTop();
+        }
+    });
+
+    document.getElementById('btnSubmitForgot')?.addEventListener('click', async () => {
+        const email = document.getElementById('forgotEmail')?.value.trim();
+        const code = document.getElementById('forgotCode')?.value.trim() || '';
+        const newPassword = document.getElementById('forgotNewPassword')?.value || '';
+        clearAuthError();
+        try {
+            const r = await apiFetch(apiUrl('/api/auth/reset-password'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, code, newPassword })
+            });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.error || 'reset failed');
+            sessionStorage.removeItem(AUTH_KEY);
+            currentUser = d.user;
+            currentAccessCode = null;
+            updateUserInfo();
+            authOverlay.classList.add('hidden');
+            syncModalScrollLock();
+            checkHealth();
+            loadPlans();
+            loadForgePresets();
+        } catch (e) {
+            setAuthError(e.message);
+            scrollAuthModalTop();
+        }
+    });
+
+    submitCodeBtn?.addEventListener('click', async () => {
+        const code = accessCodeInput?.value.trim();
+        if (!code) {
+            setAuthError();
+            return;
+        }
+        const success = await authenticateWithInviteCode(code);
+        if (success) {
+            sessionStorage.setItem(AUTH_KEY, code);
+            clearAuthError();
+            checkHealth();
+            loadPlans();
+            loadForgePresets();
+        } else {
+            setAuthError();
+            accessCodeInput.value = '';
+            accessCodeInput?.focus();
+        }
+    });
+
+    accessCodeInput?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') submitCodeBtn?.click();
+    });
+
+    syncModalScrollLock();
+}
+
+function initCookieConsent() {
+    if (!cookieConsentOverlay || !cookieConsentAccept) return;
+    if (!localStorage.getItem('ptp_cookie_consent_v1')) {
+        cookieConsentOverlay.classList.remove('hidden');
+        syncModalScrollLock();
+    }
+    cookieConsentAccept.addEventListener('click', () => {
+        localStorage.setItem('ptp_cookie_consent_v1', '1');
+        cookieConsentOverlay.classList.add('hidden');
+        syncModalScrollLock();
+    });
+}
+
+// 语言切换（顶栏与登录/注册弹窗内共用逻辑）
+function bindLangToggle(btn) {
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+        const newLang = currentLang === 'en' ? 'zh' : 'en';
+        switchLanguage(newLang);
+    });
+}
+bindLangToggle(document.getElementById('langSwitch'));
+bindLangToggle(document.getElementById('authLangSwitch'));
 
 // 初始化语言
 switchLanguage(currentLang);
@@ -1908,7 +2273,7 @@ document.querySelectorAll('.template-btn').forEach(btn => {
 // Check server health
 async function checkHealth() {
     try {
-        const response = await fetch(apiUrl('/api/health'));
+        const response = await apiFetch(apiUrl('/api/health'));
         const data = await response.json();
         
         if (data.status === 'ok') {
@@ -1998,6 +2363,7 @@ function updateEditButton() {
     const hasFile = selectedFile !== null;
     editBtn.disabled = !(hasFile && hasValidEditPromptCore());
     renderBatchFileList();
+    if (currentUser) updateUserInfo();
 }
 
 /**
@@ -2008,7 +2374,9 @@ async function runEditStreamForFile(uploadFile) {
     const formData = new FormData();
     formData.append('image', uploadFile);
     formData.append('prompt', buildEditPromptForRequest());
-    formData.append('accessCode', currentAccessCode);
+    if (currentAccessCode) {
+        formData.append('accessCode', currentAccessCode);
+    }
     formData.append(
         'workflowTemplate',
         EDIT_WORKFLOW_TEMPLATE[editIntentTask] || 'img2img_style'
@@ -2022,7 +2390,7 @@ async function runEditStreamForFile(uploadFile) {
         compareBeforeDataUrl = await fileToDataUrl(uploadFile);
     }
 
-    const response = await fetch(apiUrl('/api/edit-stream'), {
+    const response = await apiFetch(apiUrl('/api/edit-stream'), {
         method: 'POST',
         body: formData,
         signal: activeAbortController.signal
@@ -2330,7 +2698,7 @@ generateBtn.addEventListener('click', async () => {
         const metaBase = { prompt, width, height, steps, cfg, grid: gridMode };
 
         if (gridMode) {
-            const response = await fetch(apiUrl('/api/generate-grid'), {
+            const response = await apiFetch(apiUrl('/api/generate-grid'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2339,7 +2707,7 @@ generateBtn.addEventListener('click', async () => {
                     height,
                     steps,
                     cfg,
-                    accessCode: currentAccessCode
+                    ...(currentAccessCode ? { accessCode: currentAccessCode } : {})
                 }),
                 signal: activeAbortController.signal
             });
@@ -2359,7 +2727,7 @@ generateBtn.addEventListener('click', async () => {
             }
             await afterGenerateSuccess(data, metaBase);
         } else {
-            const response = await fetch(apiUrl('/api/generate-stream'), {
+            const response = await apiFetch(apiUrl('/api/generate-stream'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2368,7 +2736,7 @@ generateBtn.addEventListener('click', async () => {
                     height,
                     steps,
                     cfg,
-                    accessCode: currentAccessCode
+                    ...(currentAccessCode ? { accessCode: currentAccessCode } : {})
                 }),
                 signal: activeAbortController.signal
             });
@@ -2653,11 +3021,35 @@ if (batchRunBtn) {
     });
 }
 
-// Initialize
-if (checkAuth()) {
-    checkHealth();
-    setInterval(checkHealth, 30000);
-    loadPlans();
-    loadForgePresets();
-    showForgePage('home');
+// Initialize（邮箱会话 + 可选邀请码回退）
+initCookieConsent();
+wireAuthForms();
+if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+        try {
+            await apiFetch(apiUrl('/api/auth/logout'), { method: 'POST' });
+        } catch (_) {}
+        sessionStorage.removeItem(AUTH_KEY);
+        currentUser = null;
+        currentAccessCode = null;
+        userInfo.classList.add('hidden');
+        authOverlay.classList.remove('hidden');
+        syncModalScrollLock();
+    });
 }
+
+(async function bootAuth() {
+    const ok = await restoreAuth();
+    if (ok) {
+        checkHealth();
+        setInterval(checkHealth, 30000);
+        loadPlans();
+        loadForgePresets();
+        showForgePage('home');
+        syncModalScrollLock();
+    } else {
+        const le = document.getElementById('loginEmail');
+        if (le) le.focus();
+        syncModalScrollLock();
+    }
+})();

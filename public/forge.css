@@ -948,3 +948,187 @@
     opacity: 0.45;
     cursor: not-allowed;
 }
+
+/* —— 邮箱登录 / Cookie 同意 —— */
+.auth-modal--wide {
+    max-width: 420px;
+    width: calc(100% - 32px);
+}
+
+.auth-lead {
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    margin: 0 0 14px;
+    line-height: 1.45;
+}
+
+.auth-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 16px;
+    padding: 4px;
+    border-radius: var(--radius-pill);
+    background: rgba(0, 0, 0, 0.04);
+    border: 1px solid var(--glass-stroke-outer);
+}
+
+.auth-tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 8px 10px;
+    border-radius: var(--radius-pill);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+}
+
+.auth-tab--active {
+    background: var(--color-surface-solid);
+    color: var(--color-text);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.auth-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.auth-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+}
+
+.auth-field input {
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--glass-stroke-outer);
+    background: rgba(255, 255, 255, 0.72);
+    font-size: 14px;
+}
+
+.auth-inline {
+    display: flex;
+    gap: 8px;
+}
+
+.auth-chip {
+    flex: 1;
+    padding: 8px 10px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--glass-stroke-outer);
+    background: rgba(255, 255, 255, 0.45);
+    font-size: 12px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+}
+
+.auth-chip--active {
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--color-text);
+}
+
+.btn-send-code {
+    align-self: flex-start;
+}
+
+.auth-hint {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    margin: 4px 0 0;
+}
+
+.auth-legacy {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px dashed rgba(0, 0, 0, 0.1);
+    font-size: 12px;
+    color: var(--color-text-secondary);
+}
+
+.auth-legacy summary {
+    cursor: pointer;
+    margin-bottom: 8px;
+}
+
+.btn-logout {
+    margin-left: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--glass-stroke-outer);
+    background: rgba(255, 255, 255, 0.55);
+    cursor: pointer;
+    color: var(--color-text-secondary);
+}
+
+.btn-logout:hover {
+    background: rgba(255, 255, 255, 0.9);
+    color: var(--color-text);
+}
+
+.plan-jewelry-cost {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    line-height: 1.35;
+}
+
+.cookie-consent-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10050;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(20, 20, 24, 0.28);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.cookie-consent-overlay.hidden {
+    display: none !important;
+}
+
+.cookie-consent-card {
+    max-width: 480px;
+    width: 100%;
+    max-height: min(78vh, 100dvh - 48px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 20px 22px;
+    border-radius: var(--radius-lg);
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-stroke);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+}
+
+.cookie-consent-card h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.cookie-consent-card p {
+    margin: 0 0 14px;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    line-height: 1.45;
+}
+
+.cookie-consent-card .btn-primary {
+    width: 100%;
+}
