@@ -1,0 +1,9 @@
+# 复制为 邮箱.txt 并填入 QQ 邮箱授权码（勿提交真实文件）
+#
+# mail_port 是「发信服务器 SMTP」端口（常见 465/587），与网站 BFF 的 38024 无关。
+# 发信是本机 Node 主动连 smtp.qq.com，一般不需要 FRP；除非服务器禁止出站 465，再改用 587 等。
+#
+mail_host = 'smtp.qq.com'
+mail_port = 465
+mail_user = 'your_number@qq.com'
+mail_pass = 'your_authorization_code'

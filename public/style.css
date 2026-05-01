@@ -47,6 +47,51 @@
 
 html {
     -webkit-text-size-adjust: 100%;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+}
+
+/* 细轨道 + 圆角拇指，与浅色玻璃风一致（WebKit / Chromium） */
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 100px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(0, 0, 0, 0.32);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+/* 弹窗内滚动条略淡，避免抢视觉 */
+.auth-overlay::-webkit-scrollbar-thumb,
+.auth-modal::-webkit-scrollbar-thumb,
+.cookie-consent-overlay::-webkit-scrollbar-thumb,
+.cookie-consent-card::-webkit-scrollbar-thumb {
+    background-color: rgba(0, 0, 0, 0.14);
+}
+
+.auth-overlay::-webkit-scrollbar-thumb:hover,
+.auth-modal::-webkit-scrollbar-thumb:hover,
+.cookie-consent-overlay::-webkit-scrollbar-thumb:hover,
+.cookie-consent-card::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(0, 0, 0, 0.24);
 }
 
 /* 移动端适配 */
@@ -91,7 +136,7 @@ body {
     }
 }
 
-/* 内测码验证弹窗 */
+/* 内测码验证弹窗：遮罩承接滚动，模态框内部滚动，避免穿透下层页面 */
 .auth-overlay {
     position: fixed;
     top: 0;
@@ -102,11 +147,26 @@ body {
     -webkit-backdrop-filter: blur(16px) saturate(120%);
     backdrop-filter: blur(16px) saturate(120%);
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     z-index: 9999;
     padding: max(var(--spacing-md), var(--safe-top)) max(var(--spacing-md), var(--safe-right))
         max(var(--spacing-md), var(--safe-bottom)) max(var(--spacing-md), var(--safe-left));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.auth-modal-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    margin: -4px 0 4px;
+}
+
+.auth-lang-switch {
+    font-size: 13px;
+    padding: 7px 14px;
 }
 
 .auth-modal {
@@ -119,9 +179,22 @@ body {
     padding: 36px 32px;
     max-width: 420px;
     width: 100%;
+    max-height: min(88vh, 100dvh - 32px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    margin: auto 0;
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
     gap: var(--spacing-md);
+}
+
+html.modal-scroll-lock,
+html.modal-scroll-lock body {
+    overflow: hidden;
+    height: 100%;
 }
 
 .auth-modal h2 {
@@ -162,6 +235,11 @@ body {
     font-size: 13px;
     color: var(--color-error);
     text-align: center;
+    line-height: 1.35;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    background: rgba(255, 59, 48, 0.08);
+    border: 1px solid rgba(255, 59, 48, 0.2);
 }
 
 /* 自定义弹窗 */
@@ -929,7 +1007,7 @@ textarea::placeholder {
     letter-spacing: -0.015em;
     border-radius: var(--radius-pill);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    z-index: 10000;
+    z-index: 10100;
     transition: bottom 0.38s var(--ease-out);
     white-space: nowrap;
     box-shadow: var(--shadow-hover);

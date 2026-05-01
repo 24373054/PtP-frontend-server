@@ -7,6 +7,13 @@ const os = require('os');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const sharp = require('sharp');
+const bcrypt = require('bcrypt');
+const session = require('express-session');
+const accounts = require('./lib/accounts');
+const community = require('./lib/community-store');
+const pointLedger = require('./lib/point-ledger');
+const moderationStore = require('./lib/moderation-store');
+const { sendVerificationCode } = require('./lib/mail');
 
 const app = express();
 const PORT = 38024;
@@ -68,6 +75,20 @@ function getVersionPayload() {
         version: APP_PACKAGE.version,
         role: 'imageforge-web-bff',
         comfyuiUrl: COMFYUI_URL,
+        sqlite: true,
+        /** 便于排查「Cannot POST /api/auth/...」：若此处无 authEmailOtp，说明跑的不是当前代码或未重启 */
+        capabilities: {
+            authEmailOtp: true,
+            authSendCodePost: '/api/auth/send-code',
+            communityTopics: true,
+            pointLedger: true,
+            moderationReport: true,
+            storageSqlite: true,
+            adminSettle: Boolean(
+                process.env.IMAGEFORGE_ADMIN_KEY &&
+                    String(process.env.IMAGEFORGE_ADMIN_KEY).length > 0
+            )
+        },
         hint:
             'Web 仅请求本服务；ComfyUI 由服务端转发。鸿蒙端可对齐同一 REST/SSE 契约。'
     };
@@ -97,7 +118,14 @@ const SUBSCRIPTION_PLANS = {
     free: {
         name: { en: 'Free', zh: '免费版' },
         credits: 10,
-        creditCost: { edit: 2, generate: 1 },
+        creditCost: {
+            edit: 2,
+            generate: 1,
+            jewelry_retouch: 3,
+            jewelry_cutout: 3,
+            jewelry_scene: 4,
+            jewelry_macro: 3
+        },
         price: 0,
         features: {
             en: ['10 credits/month', 'Basic quality', 'Standard support'],
@@ -107,7 +135,14 @@ const SUBSCRIPTION_PLANS = {
     basic: {
         name: { en: 'Basic', zh: '基础版' },
         credits: 100,
-        creditCost: { edit: 2, generate: 1 },
+        creditCost: {
+            edit: 2,
+            generate: 1,
+            jewelry_retouch: 3,
+            jewelry_cutout: 3,
+            jewelry_scene: 4,
+            jewelry_macro: 3
+        },
         price: 9.99,
         features: {
             en: ['100 credits/month', 'High quality', 'Priority support', 'No watermark'],
@@ -117,7 +152,14 @@ const SUBSCRIPTION_PLANS = {
     pro: {
         name: { en: 'Professional', zh: '专业版' },
         credits: 500,
-        creditCost: { edit: 1, generate: 1 },
+        creditCost: {
+            edit: 1,
+            generate: 1,
+            jewelry_retouch: 2,
+            jewelry_cutout: 2,
+            jewelry_scene: 3,
+            jewelry_macro: 2
+        },
         price: 29.99,
         features: {
             en: ['500 credits/month', 'Ultra quality', '24/7 support', 'API access', 'Commercial license'],
@@ -127,7 +169,14 @@ const SUBSCRIPTION_PLANS = {
     enterprise: {
         name: { en: 'Enterprise', zh: '企业版' },
         credits: 2000,
-        creditCost: { edit: 1, generate: 1 },
+        creditCost: {
+            edit: 1,
+            generate: 1,
+            jewelry_retouch: 2,
+            jewelry_cutout: 2,
+            jewelry_scene: 3,
+            jewelry_macro: 2
+        },
         price: 99.99,
         features: {
             en: ['2000 credits/month', 'Maximum quality', 'Dedicated support', 'Custom API', 'White label', 'SLA guarantee'],
@@ -137,7 +186,14 @@ const SUBSCRIPTION_PLANS = {
     beta: {
         name: { en: 'Beta User', zh: '内测用户' },
         credits: 999999,
-        creditCost: { edit: 0, generate: 0 },
+        creditCost: {
+            edit: 0,
+            generate: 0,
+            jewelry_retouch: 0,
+            jewelry_cutout: 0,
+            jewelry_scene: 0,
+            jewelry_macro: 0
+        },
         price: 0,
         features: {
             en: ['Unlimited credits', 'All features', 'Beta access'],
@@ -145,6 +201,121 @@ const SUBSCRIPTION_PLANS = {
         }
     }
 };
+
+const SIGNUP_INITIAL_CREDITS = 30;
+
+/** 邮件验证码内存存储：key -> { code, expires } */
+const otpStore = new Map();
+const otpSendCooldown = new Map();
+
+function otpKey(email, purpose) {
+    return `${accounts.normalizeEmail(email)}:${purpose}`;
+}
+
+function resolveCreditCost(planId, operation) {
+    const plan = SUBSCRIPTION_PLANS[planId] || SUBSCRIPTION_PLANS.free;
+    if (planId === 'beta') return 0;
+    const c = plan.creditCost || {};
+    if (Object.prototype.hasOwnProperty.call(c, operation)) return c[operation];
+    if (operation === 'generate') return c.generate != null ? c.generate : 1;
+    return c.edit != null ? c.edit : 2;
+}
+
+function buildPublicUserFromAccount(acc, plan) {
+    return {
+        userId: acc.id,
+        username: acc.username,
+        email: acc.email,
+        plan: acc.plan,
+        planName: plan.name.en,
+        credits: acc.credits,
+        usedCredits: acc.usedCredits || 0,
+        creditCost: { ...plan.creditCost },
+        features: plan.features.en,
+        createdAt: acc.createdAt,
+        expiresAt: acc.expiresAt != null ? acc.expiresAt : null
+    };
+}
+
+function deductAccountUser(userId, operation) {
+    const acc = accounts.findById(userId);
+    if (!acc) {
+        return { success: false, error: 'User not found' };
+    }
+    const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
+    const cost = resolveCreditCost(acc.plan, operation);
+    if (acc.plan === 'beta') {
+        return { success: true, credits: acc.credits, cost: 0 };
+    }
+    if (acc.credits < cost) {
+        return {
+            success: false,
+            error: 'Insufficient credits',
+            credits: acc.credits,
+            required: cost
+        };
+    }
+    const nextCredits = acc.credits - cost;
+    const nextUsed = (acc.usedCredits || 0) + cost;
+    accounts.updateUser(userId, { credits: nextCredits, usedCredits: nextUsed });
+    try {
+        const opLabel =
+            typeof operation === 'string' ? operation : JSON.stringify(operation);
+        pointLedger.appendEntry({
+            userId,
+            type: 'consume',
+            amount: -cost,
+            balanceAfter: nextCredits,
+            relatedId: opLabel.slice(0, 120),
+            remark: `Credits consumed (${opLabel.slice(0, 200)})`
+        });
+    } catch (err) {
+        console.error('[point-ledger consume]', err.message || err);
+    }
+    return { success: true, credits: nextCredits, cost };
+}
+
+function deductCreditsAuth(auth, operation) {
+    if (!auth) return { success: false, error: 'Unauthorized' };
+    if (auth.kind === 'legacy') {
+        return deductCredits(auth.accessCode, operation);
+    }
+    return deductAccountUser(auth.userId, operation);
+}
+
+function resolveAuth(req) {
+    if (req.session && req.session.userId) {
+        const acc = accounts.findById(req.session.userId);
+        if (acc) {
+            const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
+            return {
+                kind: 'account',
+                userId: acc.id,
+                publicUser: buildPublicUserFromAccount(acc, plan)
+            };
+        }
+    }
+    const raw =
+        (req.body && req.body.accessCode) || (req.query && req.query.accessCode);
+    const code = typeof raw === 'string' ? raw.trim() : '';
+    if (code) {
+        const u = authenticateUser(code);
+        if (u) {
+            return { kind: 'legacy', accessCode: code, publicUser: u };
+        }
+    }
+    return null;
+}
+
+function getEditCreditOperationKey(workflowTemplate) {
+    const m = {
+        jewelry_retouch: 'jewelry_retouch',
+        jewelry_product_cutout: 'jewelry_cutout',
+        jewelry_scene: 'jewelry_scene',
+        jewelry_macro_detail: 'jewelry_macro'
+    };
+    return m[workflowTemplate] || 'edit';
+}
 
 // 读取用户数据
 function loadUsers() {
@@ -188,7 +359,7 @@ function authenticateUser(accessCode) {
         planName: plan.name.en, // 默认返回英文名称，前端会根据语言切换
         credits: user.credits,
         usedCredits: user.usedCredits,
-        creditCost: plan.creditCost,
+        creditCost: { ...plan.creditCost },
         features: plan.features.en,
         createdAt: user.createdAt,
         expiresAt: user.expiresAt
@@ -205,7 +376,7 @@ function deductCredits(accessCode, operation) {
     }
     
     const plan = SUBSCRIPTION_PLANS[user.plan] || SUBSCRIPTION_PLANS.free;
-    const cost = plan.creditCost[operation] || 1;
+    const cost = resolveCreditCost(user.plan, operation);
     
     // Beta用户不扣积分
     if (user.plan === 'beta') {
@@ -255,26 +426,281 @@ const upload = multer({
 });
 
 app.use(express.json());
+app.use(
+    session({
+        name: 'ptp.sid',
+        secret: process.env.SESSION_SECRET || 'dev-session-secret-change-me',
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            httpOnly: true,
+            sameSite: 'lax',
+            secure: process.env.SESSION_COOKIE_SECURE === '1'
+        }
+    })
+);
 
 // 靠前注册，避免线上进程因旧代码或未执行到文件后部而缺少该路由（Cannot GET /api/version）
 app.get('/api/version', (req, res) => {
     res.json(getVersionPayload());
 });
 
-// API: 用户认证
+const ALLOWED_OTP_PURPOSES = new Set(['register', 'login', 'reset_password']);
+
+function verifyOtp(email, purpose, code) {
+    const ck = otpKey(email, purpose);
+    const row = otpStore.get(ck);
+    if (!row || String(row.code) !== String(code).trim()) return false;
+    if (Date.now() > row.expires) {
+        otpStore.delete(ck);
+        return false;
+    }
+    otpStore.delete(ck);
+    return true;
+}
+
+function isValidUsername(username) {
+    const s = String(username || '').trim();
+    if (s.length < 2 || s.length > 32) return false;
+    return /^[a-zA-Z0-9_\-\u4e00-\u9fa5]+$/.test(s);
+}
+
+// API: 当前登录用户（邮箱注册 Cookie 会话）
+app.get('/api/auth/me', (req, res) => {
+    if (!req.session || !req.session.userId) {
+        return res.status(401).json({ success: false, error: 'Not logged in' });
+    }
+    const acc = accounts.findById(req.session.userId);
+    if (!acc) {
+        req.session.destroy(() => {});
+        return res.status(401).json({ success: false, error: 'Session invalid' });
+    }
+    const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
+    const isAdmin = acc.role === 'admin';
+    const authPortal = req.session.authPortal || 'user';
+    res.json({
+        success: true,
+        user: buildPublicUserFromAccount(acc, plan),
+        isAdmin,
+        authPortal
+    });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+    req.session.destroy(() => {
+        res.clearCookie('ptp.sid', { path: '/' });
+        res.json({ success: true });
+    });
+});
+
+app.post('/api/auth/send-code', async (req, res) => {
+    try {
+        const { email, purpose = 'login', lang = 'zh' } = req.body || {};
+        const em = accounts.normalizeEmail(email);
+        if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+            return res.status(400).json({ error: 'Invalid email' });
+        }
+        if (!ALLOWED_OTP_PURPOSES.has(purpose)) {
+            return res.status(400).json({ error: 'Invalid purpose' });
+        }
+        if (purpose === 'register' && accounts.findByEmail(em)) {
+            return res.status(400).json({ error: 'Email already registered' });
+        }
+        if ((purpose === 'login' || purpose === 'reset_password') && !accounts.findByEmail(em)) {
+            return res.status(400).json({ error: 'Email not registered' });
+        }
+        const ck = otpKey(em, purpose);
+        const last = otpSendCooldown.get(ck) || 0;
+        if (Date.now() - last < 55000) {
+            return res
+                .status(429)
+                .json({ error: 'Please wait about one minute before requesting another code' });
+        }
+        const code = String(Math.floor(100000 + Math.random() * 900000));
+        otpStore.set(ck, { code, expires: Date.now() + 10 * 60 * 1000 });
+        otpSendCooldown.set(ck, Date.now());
+        await sendVerificationCode(em, code, purpose, lang === 'en' ? 'en' : 'zh');
+        res.json({ success: true });
+    } catch (e) {
+        console.error('[send-code]', e);
+        res.status(500).json({ error: e.message || 'Failed to send email' });
+    }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+    try {
+        const { email, username, password, code, lang } = req.body || {};
+        const em = accounts.normalizeEmail(email);
+        if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+            return res.status(400).json({ error: 'Invalid email' });
+        }
+        if (!isValidUsername(username)) {
+            return res.status(400).json({ error: 'Invalid username (2–32 chars, letters/digits/_- or CJK)' });
+        }
+        const pw = String(password || '');
+        if (pw.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
+        if (accounts.findByEmail(em)) {
+            return res.status(400).json({ error: 'Email already registered' });
+        }
+        const uname = String(username).trim();
+        if (accounts.findByUsername(uname)) {
+            return res.status(400).json({ error: 'Username already taken' });
+        }
+        if (!verifyOtp(em, 'register', code)) {
+            return res.status(400).json({ error: 'Invalid or expired verification code' });
+        }
+        const passwordHash = await bcrypt.hash(pw, 10);
+        const id = uuidv4();
+        const user = {
+            id,
+            email: em,
+            username: uname,
+            usernameNorm: accounts.normalizeUsernameKey(uname),
+            passwordHash,
+            plan: 'free',
+            credits: SIGNUP_INITIAL_CREDITS,
+            usedCredits: 0,
+            createdAt: new Date().toISOString()
+        };
+        accounts.addUser(user);
+        req.session.userId = id;
+        req.session.authPortal = 'user';
+        const plan = SUBSCRIPTION_PLANS.free;
+        res.json({
+            success: true,
+            user: buildPublicUserFromAccount(user, plan),
+            isAdmin: false,
+            authPortal: 'user'
+        });
+    } catch (e) {
+        console.error('[register]', e);
+        res.status(500).json({ error: e.message || 'Registration failed' });
+    }
+});
+
+app.post('/api/auth/login-password', async (req, res) => {
+    try {
+        const { email, password, intent } = req.body || {};
+        const em = accounts.normalizeEmail(email);
+        const acc = accounts.findByEmail(em);
+        if (!acc || !acc.passwordHash) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+        const ok = await bcrypt.compare(String(password || ''), acc.passwordHash);
+        if (!ok) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+        const portal = String(intent || 'user').toLowerCase();
+        if (portal === 'admin') {
+            if (acc.role !== 'admin') {
+                return res
+                    .status(403)
+                    .json({ error: 'Administrator access denied' });
+            }
+            req.session.authPortal = 'admin';
+        } else {
+            req.session.authPortal = 'user';
+        }
+        req.session.userId = acc.id;
+        const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
+        res.json({
+            success: true,
+            user: buildPublicUserFromAccount(acc, plan),
+            isAdmin: acc.role === 'admin',
+            authPortal: req.session.authPortal
+        });
+    } catch (e) {
+        console.error('[login-password]', e);
+        res.status(500).json({ error: e.message || 'Login failed' });
+    }
+});
+
+app.post('/api/auth/login-code', async (req, res) => {
+    try {
+        const { email, code, intent } = req.body || {};
+        const em = accounts.normalizeEmail(email);
+        const acc = accounts.findByEmail(em);
+        if (!acc) {
+            return res.status(401).json({ error: 'Invalid email or code' });
+        }
+        if (!verifyOtp(em, 'login', code)) {
+            return res.status(401).json({ error: 'Invalid or expired verification code' });
+        }
+        const portal = String(intent || 'user').toLowerCase();
+        if (portal === 'admin') {
+            if (acc.role !== 'admin') {
+                return res
+                    .status(403)
+                    .json({ error: 'Administrator access denied' });
+            }
+            req.session.authPortal = 'admin';
+        } else {
+            req.session.authPortal = 'user';
+        }
+        req.session.userId = acc.id;
+        const plan = SUBSCRIPTION_PLANS[acc.plan] || SUBSCRIPTION_PLANS.free;
+        res.json({
+            success: true,
+            user: buildPublicUserFromAccount(acc, plan),
+            isAdmin: acc.role === 'admin',
+            authPortal: req.session.authPortal
+        });
+    } catch (e) {
+        console.error('[login-code]', e);
+        res.status(500).json({ error: e.message || 'Login failed' });
+    }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+    try {
+        const { email, code, newPassword } = req.body || {};
+        const em = accounts.normalizeEmail(email);
+        const acc = accounts.findByEmail(em);
+        if (!acc) {
+            return res.status(400).json({ error: 'Email not registered' });
+        }
+        if (!verifyOtp(em, 'reset_password', code)) {
+            return res.status(400).json({ error: 'Invalid or expired verification code' });
+        }
+        const pw = String(newPassword || '');
+        if (pw.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
+        const passwordHash = await bcrypt.hash(pw, 10);
+        accounts.updateUser(acc.id, { passwordHash });
+        req.session.userId = acc.id;
+        req.session.authPortal = 'user';
+        const next = accounts.findById(acc.id);
+        const plan = SUBSCRIPTION_PLANS[next.plan] || SUBSCRIPTION_PLANS.free;
+        res.json({
+            success: true,
+            user: buildPublicUserFromAccount(next, plan),
+            isAdmin: next.role === 'admin',
+            authPortal: 'user'
+        });
+    } catch (e) {
+        console.error('[reset-password]', e);
+        res.status(500).json({ error: e.message || 'Reset failed' });
+    }
+});
+
+// 旧版邀请码（仅 users.json，供脚本或未迁移账号）
 app.post('/api/auth', (req, res) => {
     const { accessCode } = req.body;
-    
+
     if (!accessCode) {
         return res.status(400).json({ error: 'Access code is required' });
     }
-    
+
     const user = authenticateUser(accessCode);
-    
+
     if (!user) {
         return res.status(401).json({ error: 'Invalid access code' });
     }
-    
+
     res.json({
         success: true,
         user: user
@@ -467,7 +893,18 @@ const EDIT_TEMPLATE_ALIASES = {
     image_upscale: 'image_upscale',
     background: 'background_repaint',
     bg: 'background_repaint',
-    background_repaint: 'background_repaint'
+    background_repaint: 'background_repaint',
+    /** 珠宝 / 商拍垂直模板 */
+    jewelry_retouch: 'jewelry_retouch',
+    jewel_retouch: 'jewelry_retouch',
+    jewelry_cutout: 'jewelry_product_cutout',
+    jewelry_product_cutout: 'jewelry_product_cutout',
+    product_cutout: 'jewelry_product_cutout',
+    jewelry_scene: 'jewelry_scene',
+    jewel_scene: 'jewelry_scene',
+    jewelry_macro: 'jewelry_macro_detail',
+    jewelry_macro_detail: 'jewelry_macro_detail',
+    jewel_macro: 'jewelry_macro_detail'
 };
 
 /**
@@ -494,6 +931,34 @@ const EDIT_VARIANT_INPUT_PATCHES = {
         '75:62': { steps: 8 },
         '75:63': { cfg: 1.22 },
         '9': { filename_prefix: 'if-bg' }
+    },
+    /** 珠宝精修：略增步数与像素，偏 lanczos */
+    jewelry_retouch: {
+        '75:80': { upscale_method: 'lanczos', megapixels: 1.15 },
+        '75:62': { steps: 6 },
+        '75:63': { cfg: 1.06 },
+        '9': { filename_prefix: 'if-jw-retouch' }
+    },
+    /** 抠图 / 白底：高 CFG + 较高步数，强化边缘 */
+    jewelry_product_cutout: {
+        '75:80': { upscale_method: 'lanczos', megapixels: 1 },
+        '75:62': { steps: 10 },
+        '75:63': { cfg: 1.3 },
+        '9': { filename_prefix: 'if-jw-cutout' }
+    },
+    /** 场景合成 */
+    jewelry_scene: {
+        '75:80': { upscale_method: 'lanczos', megapixels: 1.25 },
+        '75:62': { steps: 9 },
+        '75:63': { cfg: 1.2 },
+        '9': { filename_prefix: 'if-jw-scene' }
+    },
+    /** 微距 / 细节放大 */
+    jewelry_macro_detail: {
+        '75:80': { upscale_method: 'lanczos', megapixels: 2.25 },
+        '75:62': { steps: 14 },
+        '75:63': { cfg: 1 },
+        '9': { filename_prefix: 'if-jw-macro' }
     }
 };
 
@@ -684,6 +1149,99 @@ async function generateThumbnail(imagePath, thumbnailPath, maxWidth = 800) {
         console.error('Thumbnail generation failed:', error);
         return false;
     }
+}
+
+function escapeXmlForSvg(s) {
+    return String(s)
+        .slice(0, 120)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function clampPostNum(n, a, b) {
+    const x = Number(n);
+    if (Number.isNaN(x)) return a;
+    return Math.max(a, Math.min(b, x));
+}
+
+function parsePostProcessBody(raw) {
+    if (raw == null || raw === '') return null;
+    try {
+        const o = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return o && typeof o === 'object' ? o : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+/**
+ * 珠宝商拍导出：白边、平台尺寸 contain、可选水印。在写入 Comfy 输出后、缩略图前调用。
+ */
+async function applyOutputPostProcess(outputPath, opts) {
+    if (!opts) return;
+    const pad = clampPostNum(opts.paddingRatio, 0, 0.3);
+    const exp = opts.export;
+    const wm = opts.watermark;
+
+    let buf = await fs.promises.readFile(outputPath);
+
+    if (pad > 0) {
+        const meta = await sharp(buf).metadata();
+        const w = meta.width || 1;
+        const h = meta.height || 1;
+        const extra = Math.round(Math.max(w, h) * pad);
+        buf = await sharp(buf)
+            .extend({
+                top: extra,
+                bottom: extra,
+                left: extra,
+                right: extra,
+                background: { r: 255, g: 255, b: 255, alpha: 1 }
+            })
+            .png()
+            .toBuffer();
+    }
+
+    if (exp && Number(exp.width) > 0 && Number(exp.height) > 0) {
+        buf = await sharp(buf)
+            .resize(Math.round(exp.width), Math.round(exp.height), {
+                fit: 'contain',
+                background: { r: 255, g: 255, b: 255, alpha: 1 }
+            })
+            .png()
+            .toBuffer();
+    }
+
+    if (wm && String(wm.text || '').trim()) {
+        const opacity = clampPostNum(
+            wm.opacity != null ? wm.opacity : 0.35,
+            0.05,
+            1
+        );
+        const meta = await sharp(buf).metadata();
+        const tw = meta.width || 800;
+        const th = meta.height || 800;
+        const fontSize = Math.max(
+            12,
+            Math.round(Math.min(tw, th) * 0.028)
+        );
+        const text = escapeXmlForSvg(wm.text);
+        const svg = Buffer.from(
+            `<svg width="${tw}" height="${th}" xmlns="http://www.w3.org/2000/svg">
+        <text x="${tw - 16}" y="${th - 16}" font-family="sans-serif" font-size="${fontSize}"
+          fill="rgba(255,255,255,${opacity})" text-anchor="end" stroke="rgba(0,0,0,${opacity * 0.6})" stroke-width="2">${text}</text>
+      </svg>`,
+            'utf8'
+        );
+        buf = await sharp(buf)
+            .composite([{ input: svg, left: 0, top: 0 }])
+            .png()
+            .toBuffer();
+    }
+
+    await fs.promises.writeFile(outputPath, buf);
 }
 
 // 合成四宫格图片
@@ -908,20 +1466,15 @@ async function waitForCompletionStream(promptId, onProgress, timeout = 300000) {
 // API: 文字生成图片（四宫格并行模式）
 app.post('/api/generate-grid', async (req, res) => {
     try {
-        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1, accessCode } = req.body;
-        
-        if (!accessCode) {
-            return res.status(401).json({ error: 'Access code is required' });
+        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1 } = req.body;
+
+        const auth = resolveAuth(req);
+        if (!auth) {
+            return res.status(401).json({ error: 'Login or access code required' });
         }
-        
-        // 验证用户
-        const user = authenticateUser(accessCode);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid access code' });
-        }
-        
+
         // 检查并扣除积分（生成4张图片，消耗4倍积分）
-        const creditResult = deductCredits(accessCode, 'generate');
+        const creditResult = deductCreditsAuth(auth, 'generate');
         if (!creditResult.success) {
             return res.status(402).json({ 
                 error: creditResult.error,
@@ -932,7 +1485,7 @@ app.post('/api/generate-grid', async (req, res) => {
         
         // 再扣除3次（总共4次）
         for (let i = 0; i < 3; i++) {
-            const extraCredit = deductCredits(accessCode, 'generate');
+            const extraCredit = deductCreditsAuth(auth, 'generate');
             if (!extraCredit.success) {
                 return res.status(402).json({ 
                     error: 'Insufficient credits for 4 images',
@@ -1006,20 +1559,15 @@ app.post('/api/generate-grid', async (req, res) => {
 // API: 文字生成图片（原单张模式，保持向后兼容）
 app.post('/api/generate', async (req, res) => {
     try {
-        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1, accessCode } = req.body;
-        
-        if (!accessCode) {
-            return res.status(401).json({ error: 'Access code is required' });
+        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1 } = req.body;
+
+        const auth = resolveAuth(req);
+        if (!auth) {
+            return res.status(401).json({ error: 'Login or access code required' });
         }
-        
-        // 验证用户
-        const user = authenticateUser(accessCode);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid access code' });
-        }
-        
+
         // 检查并扣除积分
-        const creditResult = deductCredits(accessCode, 'generate');
+        const creditResult = deductCreditsAuth(auth, 'generate');
         if (!creditResult.success) {
             return res.status(402).json({ 
                 error: creditResult.error,
@@ -1087,20 +1635,15 @@ app.post('/api/generate', async (req, res) => {
 // API: 文字生成图片（流式SSE版本）
 app.post('/api/generate-stream', async (req, res) => {
     try {
-        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1, accessCode } = req.body;
-        
-        if (!accessCode) {
-            return res.status(401).json({ error: 'Access code is required' });
+        const { prompt, width = 1024, height = 1024, steps = 4, cfg = 1 } = req.body;
+
+        const auth = resolveAuth(req);
+        if (!auth) {
+            return res.status(401).json({ error: 'Login or access code required' });
         }
-        
-        // 验证用户
-        const user = authenticateUser(accessCode);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid access code' });
-        }
-        
+
         // 检查并扣除积分
-        const creditResult = deductCredits(accessCode, 'generate');
+        const creditResult = deductCreditsAuth(auth, 'generate');
         if (!creditResult.success) {
             return res.status(402).json({ 
                 error: creditResult.error,
@@ -1210,20 +1753,15 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'No image uploaded' });
         }
         
-        const { prompt, accessCode, workflowTemplate } = req.body;
-        
-        if (!accessCode) {
-            return res.status(401).json({ error: 'Access code is required' });
+        const { prompt, workflowTemplate } = req.body;
+
+        const auth = resolveAuth(req);
+        if (!auth) {
+            return res.status(401).json({ error: 'Login or access code required' });
         }
-        
-        // 验证用户
-        const user = authenticateUser(accessCode);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid access code' });
-        }
-        
-        // 检查并扣除积分
-        const creditResult = deductCredits(accessCode, 'edit');
+
+        const creditOp = getEditCreditOperationKey(workflowTemplate);
+        const creditResult = deductCreditsAuth(auth, creditOp);
         if (!creditResult.success) {
             return res.status(402).json({ 
                 error: creditResult.error,
@@ -1255,6 +1793,15 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
         const outputFilename = `${uuidv4()}.png`;
         const outputPath = path.join(OUTPUT_DIR, outputFilename);
         fs.writeFileSync(outputPath, imageResponse.data);
+
+        try {
+            await applyOutputPostProcess(
+                outputPath,
+                parsePostProcessBody(req.body.postProcess)
+            );
+        } catch (pe) {
+            console.error('[postProcess]', pe.message || pe);
+        }
         
         // 生成缩略图
         const thumbnailFilename = `thumb_${outputFilename.replace('.png', '.jpg')}`;
@@ -1286,20 +1833,15 @@ app.post('/api/edit-stream', upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'No image uploaded' });
         }
         
-        const { prompt, accessCode, workflowTemplate } = req.body;
-        
-        if (!accessCode) {
-            return res.status(401).json({ error: 'Access code is required' });
+        const { prompt, workflowTemplate } = req.body;
+
+        const auth = resolveAuth(req);
+        if (!auth) {
+            return res.status(401).json({ error: 'Login or access code required' });
         }
-        
-        // 验证用户
-        const user = authenticateUser(accessCode);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid access code' });
-        }
-        
-        // 检查并扣除积分
-        const creditResult = deductCredits(accessCode, 'edit');
+
+        const creditOp = getEditCreditOperationKey(workflowTemplate);
+        const creditResult = deductCreditsAuth(auth, creditOp);
         if (!creditResult.success) {
             return res.status(402).json({ 
                 error: creditResult.error,
@@ -1353,6 +1895,15 @@ app.post('/api/edit-stream', upload.single('image'), async (req, res) => {
             const outputFilename = `${uuidv4()}.png`;
             const outputPath = path.join(OUTPUT_DIR, outputFilename);
             fs.writeFileSync(outputPath, imageResponse.data);
+
+            try {
+                await applyOutputPostProcess(
+                    outputPath,
+                    parsePostProcessBody(req.body.postProcess)
+                );
+            } catch (pe) {
+                console.error('[postProcess]', pe.message || pe);
+            }
             
             sendEvent({ status: 'processing', progress: 95, message: 'Generating thumbnail...' });
             
@@ -1424,6 +1975,794 @@ app.get('/api/edit-variants', (req, res) => {
     });
 });
 
+// --- 话题挑战 / 作品社区（Phase 2：SQLite data/imageforge.sqlite，首次启动可从 community.json 等迁移；契约见 docs/ImageForge_API_Document_Template.md）---
+
+function publicBaseUrl(req) {
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http')
+        .split(',')[0]
+        .trim();
+    const host = req.get('host') || `localhost:${PORT}`;
+    return `${proto}://${host}`;
+}
+
+function resolveLocalAssetPath(rel) {
+    if (typeof rel !== 'string' || !rel.startsWith('/')) return null;
+    if (rel.includes('..')) return null;
+    if (rel.startsWith('/outputs/')) {
+        const fn = path.basename(rel);
+        const full = path.join(OUTPUT_DIR, fn);
+        if (fs.existsSync(full)) return { full, rel: `/outputs/${fn}` };
+    }
+    if (rel.startsWith('/uploads/')) {
+        const fn = path.basename(rel);
+        const full = path.join(UPLOAD_DIR, fn);
+        if (fs.existsSync(full)) return { full, rel: `/uploads/${fn}` };
+    }
+    return null;
+}
+
+function workflowFromHistoryProof(proof) {
+    if (!proof || typeof proof !== 'object') return null;
+    if (proof.mode === 'generate') return 't2i_generate';
+    if (proof.workflowTemplate) return String(proof.workflowTemplate);
+    if (proof.params && proof.params.workflowTemplate) {
+        return String(proof.params.workflowTemplate);
+    }
+    return null;
+}
+
+function requireSessionAccount(req, res) {
+    if (!req.session || !req.session.userId) {
+        res.status(401).json({ code: 40101, message: 'Unauthorized', data: null });
+        return null;
+    }
+    const acc = accounts.findById(req.session.userId);
+    if (!acc) {
+        res.status(401).json({ code: 40101, message: 'Unauthorized', data: null });
+        return null;
+    }
+    return acc;
+}
+
+function isAdminRequest(req) {
+    const key = process.env.IMAGEFORGE_ADMIN_KEY;
+    if (key && String(key).length > 0 && req.get('x-admin-key') === String(key)) {
+        return true;
+    }
+    if (
+        req.session &&
+        req.session.userId &&
+        req.session.authPortal === 'admin'
+    ) {
+        const acc = accounts.findById(req.session.userId);
+        if (acc && acc.role === 'admin') return true;
+    }
+    return false;
+}
+
+function requireAdmin(req, res) {
+    if (!isAdminRequest(req)) {
+        res.status(403).json({ code: 40301, message: 'Forbidden', data: null });
+        return false;
+    }
+    return true;
+}
+
+/** 活动奖励：增加 credits 并记 point_ledger（amount 正整数） */
+function grantRewardCredits(userId, amountInt, opts = {}) {
+    const acc = accounts.findById(userId);
+    if (!acc || !Number.isFinite(amountInt) || amountInt <= 0) {
+        return { success: false, error: 'bad_request' };
+    }
+    const next = (acc.credits || 0) + Math.floor(amountInt);
+    accounts.updateUser(userId, { credits: next });
+    pointLedger.appendEntry({
+        userId,
+        type: 'reward',
+        amount: Math.floor(amountInt),
+        balanceAfter: next,
+        relatedId: opts.relatedId || null,
+        remark: opts.remark || 'Topic challenge reward'
+    });
+    return { success: true, credits: next };
+}
+
+/** 与 POST /api/admin/topics/:topicId/settle 共用；供定时自动结算调用。 */
+function executeTopicSettlement(topicId) {
+    const built = community.buildSettlementPayouts(topicId);
+    if (built.error) {
+        return { ok: false, error: built.error };
+    }
+    for (const row of built.payouts) {
+        if (!accounts.findById(row.userId)) {
+            return { ok: false, error: 'unknown_user', row };
+        }
+    }
+    const applied = [];
+    for (const row of built.payouts) {
+        const g = grantRewardCredits(row.userId, row.points, {
+            relatedId: topicId,
+            remark: `Challenge reward · rank ${row.rank} · post ${row.postId}`
+        });
+        applied.push({
+            ...row,
+            ok: g.success,
+            creditsAfter: g.success ? g.credits : null,
+            error: g.success ? null : g.error || null
+        });
+        if (!g.success) {
+            return {
+                ok: false,
+                error: 'grant_failed',
+                topicId,
+                applied
+            };
+        }
+    }
+    community.markTopicSettled(topicId, {
+        payouts: applied,
+        settledAt: new Date().toISOString()
+    });
+    return { ok: true, topicId, payouts: applied };
+}
+
+function serializeCommunityPost(req, p, viewerUserId, { includePrompt = false } = {}) {
+    const base = publicBaseUrl(req);
+    const likeUserIds = p.likeUserIds || [];
+    const favoriteUserIds = p.favoriteUserIds || [];
+    const nickname = p.user && p.user.nickname;
+    const showPrompt =
+        includePrompt &&
+        (p.publicPrompt || (viewerUserId && viewerUserId === p.userId));
+    return {
+        id: p.id,
+        topicId: p.topicId,
+        user: {
+            id: p.userId,
+            nickname,
+            avatarUrl: (p.user && p.user.avatarUrl) || null
+        },
+        imageUrl: `${base}${p.imageRel}`,
+        caption: p.caption,
+        taskType: p.taskType,
+        workflowTemplate: p.workflowTemplate,
+        promptSummary: showPrompt ? p.promptSummary : null,
+        aiLabel: p.aiLabel !== false,
+        status: p.status,
+        likeCount: likeUserIds.length,
+        commentCount: (p.comments && p.comments.length) || 0,
+        favoriteCount: favoriteUserIds.length,
+        score: community.computeScore(p),
+        rank: null,
+        liked: viewerUserId ? likeUserIds.includes(viewerUserId) : false,
+        favorited: viewerUserId ? favoriteUserIds.includes(viewerUserId) : false,
+        createdAt: p.createdAt
+    };
+}
+
+function serializeAdminTopic(req, t) {
+    if (!t) return null;
+    const base = publicBaseUrl(req);
+    const coverUrl = t.coverUrl
+        ? String(t.coverUrl).startsWith('http')
+            ? t.coverUrl
+            : `${base}${t.coverUrl}`
+        : '';
+    return { ...t, coverUrl };
+}
+
+function serializeAdminPostBrief(req, p) {
+    const base = publicBaseUrl(req);
+    return {
+        id: p.id,
+        topicId: p.topicId,
+        userId: p.userId,
+        user: p.user,
+        imageUrl: `${base}${p.imageRel}`,
+        thumbUrl: p.thumbRel ? `${base}${p.thumbRel}` : `${base}${p.imageRel}`,
+        caption: p.caption,
+        status: p.status,
+        taskType: p.taskType,
+        promptSummary: p.promptSummary,
+        publicPrompt: p.publicPrompt,
+        commentCount: (p.comments && p.comments.length) || 0,
+        createdAt: p.createdAt
+    };
+}
+
+/** 管理端全文：含评论、prompt、historyProof、点赞/收藏用户 id */
+function serializeAdminPost(req, p) {
+    const base = publicBaseUrl(req);
+    const likeUserIds = p.likeUserIds || [];
+    const favoriteUserIds = p.favoriteUserIds || [];
+    return {
+        id: p.id,
+        topicId: p.topicId,
+        userId: p.userId,
+        user: p.user,
+        imageRel: p.imageRel,
+        thumbRel: p.thumbRel,
+        imageUrl: `${base}${p.imageRel}`,
+        thumbUrl: p.thumbRel ? `${base}${p.thumbRel}` : `${base}${p.imageRel}`,
+        caption: p.caption,
+        taskType: p.taskType,
+        workflowTemplate: p.workflowTemplate,
+        promptSummary: p.promptSummary,
+        publicPrompt: p.publicPrompt,
+        aiLabel: p.aiLabel !== false,
+        status: p.status,
+        likeUserIds: [...likeUserIds],
+        favoriteUserIds: [...favoriteUserIds],
+        likeCount: likeUserIds.length,
+        favoriteCount: favoriteUserIds.length,
+        commentCount: (p.comments && p.comments.length) || 0,
+        comments: p.comments || [],
+        historyProof: p.historyProof,
+        score: community.computeScore(p),
+        createdAt: p.createdAt
+    };
+}
+
+app.get('/api/topics', (req, res) => {
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 20, 50);
+    const { list, ...rest } = community.listTopics({ status, page, pageSize });
+    const base = publicBaseUrl(req);
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            list: list.map((t) => ({
+                id: t.id,
+                title: t.title,
+                tag: t.tag,
+                coverUrl: t.coverUrl
+                    ? t.coverUrl.startsWith('http')
+                        ? t.coverUrl
+                        : `${base}${t.coverUrl}`
+                    : '',
+                status: t.status,
+                startAt: t.startAt,
+                endAt: t.endAt,
+                postCount: t.postCount,
+                rewardPool: t.rewardPool,
+                settlementStatus: t.settlementStatus || 'none'
+            })),
+            ...rest
+        }
+    });
+});
+
+app.get('/api/topics/:topicId', (req, res) => {
+    const t = community.getTopic(req.params.topicId);
+    if (!t) {
+        return res
+            .status(404)
+            .json({ code: 40401, message: 'Topic not found', data: null });
+    }
+    const auth = resolveAuth(req);
+    const viewerId = auth && auth.kind === 'account' ? auth.userId : null;
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            ...t,
+            mySubmitted: viewerId
+                ? community.userHasPostInTopic(viewerId, t.id)
+                : false
+        }
+    });
+});
+
+app.post('/api/topics/:topicId/posts', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const topic = community.getTopic(req.params.topicId);
+    if (!topic) {
+        return res
+            .status(404)
+            .json({ code: 40401, message: 'Topic not found', data: null });
+    }
+    if (topic.status !== 'active') {
+        return res.status(400).json({
+            code: 40001,
+            message: 'Topic not active',
+            data: null
+        });
+    }
+    const now = Date.now();
+    if (
+        new Date(topic.startAt).getTime() > now ||
+        new Date(topic.endAt).getTime() < now
+    ) {
+        return res.status(400).json({
+            code: 40002,
+            message: 'Topic not in time window',
+            data: null
+        });
+    }
+    if (community.userHasPostInTopic(acc.id, topic.id)) {
+        return res.status(409).json({
+            code: 40901,
+            message: 'Already submitted to this topic',
+            data: null
+        });
+    }
+    const { caption = '', publicPrompt = false, historyProof } = req.body || {};
+    if (!historyProof || typeof historyProof !== 'object') {
+        return res.status(400).json({
+            code: 40003,
+            message: 'historyProof required',
+            data: null
+        });
+    }
+    const wf = workflowFromHistoryProof(historyProof);
+    if (!wf || !topic.allowedTaskTypes.includes(wf)) {
+        return res.status(400).json({
+            code: 40004,
+            message: 'Workflow not allowed for this topic',
+            data: null
+        });
+    }
+    const outRel = historyProof.outRel || historyProof.imageRel;
+    const resolved = resolveLocalAssetPath(outRel);
+    if (!resolved) {
+        return res.status(400).json({
+            code: 40005,
+            message: 'Output file not found on server',
+            data: null
+        });
+    }
+    let thumbRel = resolved.rel;
+    if (historyProof.thumbRel) {
+        const tr = resolveLocalAssetPath(historyProof.thumbRel);
+        if (tr) thumbRel = tr.rel;
+    }
+    const taskType = String(historyProof.taskType || wf).slice(0, 64);
+    const promptSummary = String(
+        historyProof.prompt || historyProof.promptSummary || ''
+    ).slice(0, 400);
+
+    const post = community.createPost({
+        topicId: topic.id,
+        userId: acc.id,
+        nickname: acc.username,
+        avatarUrl: null,
+        caption: String(caption || '').slice(0, 500),
+        publicPrompt: !!publicPrompt,
+        workflowTemplate: wf,
+        taskType,
+        promptSummary,
+        imageRel: resolved.rel,
+        thumbRel,
+        historyProof: {
+            historyId: historyProof.historyId,
+            at: historyProof.at,
+            mode: historyProof.mode
+        }
+    });
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: { id: post.id, status: post.status }
+    });
+});
+
+app.get('/api/topics/:topicId/posts', (req, res) => {
+    const topic = community.getTopic(req.params.topicId);
+    if (!topic) {
+        return res
+            .status(404)
+            .json({ code: 40401, message: 'Topic not found', data: null });
+    }
+    const sort =
+        req.query.sort === 'hot' || req.query.sort === 'rank'
+            ? req.query.sort
+            : 'latest';
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 20, 50);
+    const { list, ...rest } = community.listPostsForTopic(topic.id, {
+        sort,
+        page,
+        pageSize
+    });
+    const auth = resolveAuth(req);
+    const viewerId = auth && auth.kind === 'account' ? auth.userId : null;
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            list: list.map(({ post: p, rank }) => {
+                const row = serializeCommunityPost(req, p, viewerId, {
+                    includePrompt: false
+                });
+                row.rank = rank;
+                return row;
+            }),
+            ...rest
+        }
+    });
+});
+
+app.get('/api/topics/:topicId/ranking', (req, res) => {
+    const topic = community.getTopic(req.params.topicId);
+    if (!topic) {
+        return res
+            .status(404)
+            .json({ code: 40401, message: 'Topic not found', data: null });
+    }
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 50, 100);
+    const { list, ...rest } = community.rankingForTopic(topic.id, {
+        page,
+        pageSize
+    });
+    const auth = resolveAuth(req);
+    const viewerId = auth && auth.kind === 'account' ? auth.userId : null;
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            list: list.map(({ post: p, rank, score }) => {
+                const row = serializeCommunityPost(req, p, viewerId);
+                row.rank = rank;
+                row.score = score;
+                return row;
+            }),
+            ...rest
+        }
+    });
+});
+
+app.get('/api/posts/:postId', (req, res) => {
+    const p = community.findPost(req.params.postId);
+    if (!p || p.status !== 'published') {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    const auth = resolveAuth(req);
+    const viewerId = auth && auth.kind === 'account' ? auth.userId : null;
+    const ranked = community.rankingForTopic(p.topicId, {
+        page: 1,
+        pageSize: 5000
+    });
+    const rankMap = new Map(ranked.list.map((x) => [x.post.id, x.rank]));
+    const row = serializeCommunityPost(req, p, viewerId, {
+        includePrompt: true
+    });
+    row.rank = rankMap.get(p.id) || null;
+    row.shareCount = 0;
+    res.json({ code: 0, message: 'ok', data: row });
+});
+
+app.post('/api/posts/:postId/like', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const result = community.setPostLike(req.params.postId, acc.id, true);
+    if (!result) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({ code: 0, message: 'ok', data: result });
+});
+
+app.delete('/api/posts/:postId/like', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const result = community.setPostLike(req.params.postId, acc.id, false);
+    if (!result) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({ code: 0, message: 'ok', data: result });
+});
+
+app.post('/api/posts/:postId/comments', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const content = (req.body && req.body.content) || '';
+    const c = community.addComment(req.params.postId, {
+        userId: acc.id,
+        nickname: acc.username,
+        content
+    });
+    if (c === null) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    if (c.error === 'empty') {
+        return res
+            .status(400)
+            .json({ code: 40006, message: 'Empty comment', data: null });
+    }
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            id: c.id,
+            postId: req.params.postId,
+            content: c.content,
+            status: 'published',
+            createdAt: c.createdAt
+        }
+    });
+});
+
+app.get('/api/posts/:postId/comments', (req, res) => {
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 20, 50);
+    const result = community.listComments(req.params.postId, {
+        page,
+        pageSize
+    });
+    if (!result) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            ...result,
+            list: result.list.map((c) => ({
+                id: c.id,
+                user: c.user,
+                content: c.content,
+                createdAt: c.createdAt
+            }))
+        }
+    });
+});
+
+app.post('/api/posts/:postId/favorite', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const result = community.setPostFavorite(req.params.postId, acc.id, true);
+    if (!result) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({ code: 0, message: 'ok', data: result });
+});
+
+app.delete('/api/posts/:postId/favorite', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const result = community.setPostFavorite(req.params.postId, acc.id, false);
+    if (!result) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({ code: 0, message: 'ok', data: result });
+});
+
+app.post('/api/posts/:postId/report', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const p = community.findPost(req.params.postId);
+    if (!p || p.status !== 'published') {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    const { reason = 'other', note = '' } = req.body || {};
+    const r = moderationStore.addReport({
+        postId: p.id,
+        topicId: p.topicId,
+        reporterUserId: acc.id,
+        reason,
+        note
+    });
+    if (r.error === 'duplicate') {
+        return res.status(409).json({
+            code: 40902,
+            message: 'Already reported this post',
+            data: null
+        });
+    }
+    res.json({ code: 0, message: 'ok', data: { id: r.report.id } });
+});
+
+app.get('/api/auth/point-ledger', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 30, 100);
+    const data = pointLedger.listForUser(acc.id, { page, pageSize });
+    res.json({ code: 0, message: 'ok', data });
+});
+
+app.get('/api/admin/moderation', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const status = req.query.status ? String(req.query.status) : 'open';
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 50, 200);
+    const data = moderationStore.listReports({ status, page, pageSize });
+    res.json({ code: 0, message: 'ok', data });
+});
+
+app.post('/api/admin/moderation/:reportId/resolve', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const { resolution = 'reviewed', adminNote = '' } = req.body || {};
+    const out = moderationStore.resolveReport(req.params.reportId, {
+        resolution,
+        adminNote
+    });
+    if (!out) {
+        return res
+            .status(404)
+            .json({ code: 40403, message: 'Report not found', data: null });
+    }
+    if (out.error === 'not_open') {
+        return res.status(400).json({
+            code: 40012,
+            message: 'Report already resolved',
+            data: null
+        });
+    }
+    res.json({ code: 0, message: 'ok', data: { id: out.report.id, status: out.report.status } });
+});
+
+app.post('/api/admin/posts/:postId/hide', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const p = community.setPostHidden(req.params.postId, true);
+    if (!p) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: { id: p.id, status: p.status }
+    });
+});
+
+app.post('/api/admin/topics/:topicId/settle', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const topicId = req.params.topicId;
+    const out = executeTopicSettlement(topicId);
+    if (!out.ok) {
+        if (out.error === 'not_found') {
+            return res
+                .status(404)
+                .json({ code: 40401, message: 'Topic not found', data: null });
+        }
+        if (out.error === 'already_settled') {
+            return res.status(400).json({
+                code: 40010,
+                message: 'Topic already settled',
+                data: null
+            });
+        }
+        if (out.error === 'topic_not_ended') {
+            return res.status(400).json({
+                code: 40011,
+                message: 'Topic must be ended before settlement',
+                data: null
+            });
+        }
+        if (out.error === 'unknown_user') {
+            return res.status(400).json({
+                code: 40020,
+                message: `Unknown user in payout: ${out.row.userId}`,
+                data: { row: out.row }
+            });
+        }
+        if (out.error === 'grant_failed') {
+            return res.status(500).json({
+                code: 50010,
+                message: 'Settlement aborted after partial credit failure',
+                data: { topicId, payouts: out.applied }
+            });
+        }
+        return res.status(500).json({
+            code: 50011,
+            message: String(out.error),
+            data: out
+        });
+    }
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: { topicId, payouts: out.payouts }
+    });
+});
+
+app.get('/api/admin/summary', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    community.syncTopicLifecycle();
+    const data = community.getAdminSummary();
+    res.json({ code: 0, message: 'ok', data });
+});
+
+app.get('/api/admin/users', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const data = accounts.load();
+    const list = (data.users || []).map((u) => ({
+        id: u.id,
+        email: u.email,
+        username: u.username,
+        plan: u.plan,
+        role: u.role || null,
+        credits: u.credits,
+        createdAt: u.createdAt
+    }));
+    res.json({ code: 0, message: 'ok', data: { list } });
+});
+
+app.get('/api/admin/topics', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    community.syncTopicLifecycle();
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 100, 200);
+    const { list, ...rest } = community.listTopics({ status, page, pageSize });
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            list: list.map((t) => serializeAdminTopic(req, t)),
+            ...rest
+        }
+    });
+});
+
+app.get('/api/admin/topics/:topicId/posts', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const t = community.getTopic(req.params.topicId);
+    if (!t) {
+        return res
+            .status(404)
+            .json({ code: 40401, message: 'Topic not found', data: null });
+    }
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 50, 200);
+    const { list, ...rest } = community.listPostsForTopicAdmin(t.id, {
+        page,
+        pageSize
+    });
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: {
+            list: list.map((p) => serializeAdminPostBrief(req, p)),
+            ...rest
+        }
+    });
+});
+
+app.get('/api/admin/posts/:postId', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const p = community.findPost(req.params.postId);
+    if (!p) {
+        return res
+            .status(404)
+            .json({ code: 40402, message: 'Post not found', data: null });
+    }
+    res.json({
+        code: 0,
+        message: 'ok',
+        data: serializeAdminPost(req, p)
+    });
+});
+
+app.get('/api/admin/ledger', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 50, 200);
+    const data = pointLedger.listAll({ page, pageSize });
+    res.json({ code: 0, message: 'ok', data });
+});
+
 // 静态与产物目录放在 API 之后，避免意外覆盖 /api 等路由
 app.use(express.static('public'));
 app.use('/workflows', express.static(path.join(__dirname, 'workflows')));
@@ -1444,6 +2783,25 @@ function lanIPv4Addresses() {
     return out;
 }
 
+function runAutoSettlementPass() {
+    const v = process.env.IMAGEFORGE_AUTO_SETTLE;
+    if (v !== '1' && v !== 'true') return;
+    try {
+        community.syncTopicLifecycle();
+        const ids = community.listTopicsAwaitingSettlement();
+        for (const topicId of ids) {
+            const out = executeTopicSettlement(topicId);
+            if (out.ok) {
+                console.log('[auto-settle] settled', topicId);
+            } else {
+                console.warn('[auto-settle] skip', topicId, out.error);
+            }
+        }
+    } catch (e) {
+        console.error('[auto-settle]', e);
+    }
+}
+
 app.listen(PORT, '0.0.0.0', () => {
     writePublicVersionInfoFile();
     console.log(`\n=== P2P Image Editor Server ===`);
@@ -1457,5 +2815,21 @@ app.listen(PORT, '0.0.0.0', () => {
         console.log('Network: (未发现非回环 IPv4，请用 ip addr 查看本机地址)');
     }
     console.log(`ComfyUI: ${COMFYUI_URL}`);
+    console.log(
+        `Auth: POST /api/auth/send-code | register | login-password | login-code | reset-password | GET /api/auth/me`
+    );
+    console.log(
+        `Community: GET /api/topics | /api/topics/:id | posts | ranking | GET/POST /api/posts/...`
+    );
+    if (
+        process.env.IMAGEFORGE_AUTO_SETTLE === '1' ||
+        process.env.IMAGEFORGE_AUTO_SETTLE === 'true'
+    ) {
+        console.log(
+            'Auto-settle: IMAGEFORGE_AUTO_SETTLE enabled (hourly + 15s first run)'
+        );
+        setInterval(runAutoSettlementPass, 60 * 60 * 1000);
+        setTimeout(runAutoSettlementPass, 15000);
+    }
     console.log(`================================\n`);
 });
