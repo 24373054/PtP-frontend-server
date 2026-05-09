@@ -9,6 +9,7 @@ const moderationStore = require('../lib/moderation-store');
 const pointLedger = require('../lib/point-ledger');
 const { resolveAuth, grantRewardCredits } = require('../lib/credit');
 const config = require('../lib/config');
+const notifications = require('../lib/notifications');
 
 function publicBaseUrl(req) {
     const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
@@ -273,6 +274,18 @@ router.post('/api/posts/:postId/like', (req, res) => {
     if (!acc) return;
     const result = community.setPostLike(req.params.postId, acc.id, true);
     if (!result) return res.status(404).json({ code: 40402, message: 'Post not found', data: null });
+    // Notify post author
+    try {
+        const post = community.findPost(req.params.postId);
+        if (post && post.userId !== acc.id) {
+            notifications.notify({
+                userId: post.userId,
+                type: 'like',
+                title: `${acc.username} 赞了你的作品`,
+                relatedId: post.id
+            });
+        }
+    } catch (_) {}
     res.json({ code: 0, message: 'ok', data: result });
 });
 
@@ -291,6 +304,19 @@ router.post('/api/posts/:postId/comments', (req, res) => {
     const c = community.addComment(req.params.postId, { userId: acc.id, nickname: acc.username, content });
     if (c === null) return res.status(404).json({ code: 40402, message: 'Post not found', data: null });
     if (c.error === 'empty') return res.status(400).json({ code: 40006, message: 'Empty comment', data: null });
+    // Notify post author
+    try {
+        const post = community.findPost(req.params.postId);
+        if (post && post.userId !== acc.id) {
+            notifications.notify({
+                userId: post.userId,
+                type: 'comment',
+                title: `${acc.username} 评论了你的作品`,
+                body: content.slice(0, 200),
+                relatedId: post.id
+            });
+        }
+    } catch (_) {}
     res.json({ code: 0, message: 'ok', data: { id: c.id, postId: req.params.postId, content: c.content, status: 'published', createdAt: c.createdAt } });
 });
 
@@ -372,6 +398,21 @@ router.post('/api/admin/topics/:topicId/settle', (req, res) => {
     if (!requireAdmin(req, res)) return;
     const topicId = req.params.topicId;
     const out = executeTopicSettlement(topicId);
+    // Notify winners
+    if (out.ok) {
+        for (const p of out.payouts) {
+            try {
+                notifications.notify({
+                    userId: p.userId,
+                    type: 'reward',
+                    title: `话题挑战结算 — 获得 ${p.points} 积分奖励`,
+                    body: `排名第 ${p.rank} 名`,
+                    relatedId: topicId
+                });
+            } catch (_) {}
+        }
+    }
+
     if (!out.ok) {
         if (out.error === 'not_found') return res.status(404).json({ code: 40401, message: 'Topic not found', data: null });
         if (out.error === 'already_settled') return res.status(400).json({ code: 40010, message: 'Topic already settled', data: null });
@@ -458,6 +499,31 @@ router.get('/api/admin/ledger', (req, res) => {
     const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 50, 200);
     const data = pointLedger.listAll({ page, pageSize });
     res.json({ code: 0, message: 'ok', data });
+});
+
+// === Notification API ===
+router.get('/api/notifications', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const page = parseInt(req.query.page, 10) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize, 10) || 30, 100);
+    const data = notifications.listForUser(acc.id, { page, pageSize });
+    res.json({ code: 0, message: 'ok', data });
+});
+
+router.get('/api/notifications/unread-count', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const count = notifications.unreadCount(acc.id);
+    res.json({ code: 0, message: 'ok', data: { count } });
+});
+
+router.post('/api/notifications/mark-read', (req, res) => {
+    const acc = requireSessionAccount(req, res);
+    if (!acc) return;
+    const { id = 'all' } = req.body || {};
+    const result = notifications.markRead(acc.id, id);
+    res.json({ code: 0, message: 'ok', data: result });
 });
 
 module.exports = { router, executeTopicSettlement, isAdminRequest };

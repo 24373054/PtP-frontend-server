@@ -1993,18 +1993,18 @@ async function loadTopicDetailPage(topicId) {
         hero.innerHTML = `
             <h2>${communityEsc(topic.title)}</h2>
             <p class="topic-hero-desc">${communityEsc(topic.description || '')}</p>
-            <p class="topic-hero-meta">${communityEsc(
+            <p class="topic-hero-meta"><span data-topic-end="${communityEsc(topic.endAt)}">${communityEsc(
                 `${communityFormatDate(topic.startAt)} — ${communityFormatDate(
                     topic.endAt
                 )} · ${topic.postCount || 0}`
-            )}${
+            )}</span>${
                 topic.mySubmitted ? ` · <strong>${submittedLabel}</strong>` : ''
             }</p>
-            <p class="topic-hero-meta">${communityEsc(
+            <p class="topic-hero-meta"><span data-topic-end="${communityEsc(topic.endAt)}">${communityEsc(
                 `${i18n[currentLang]['community.sortLabel']}: ${(
                     topic.allowedTaskTypes || []
                 ).join(', ')}`
-            )}</p>`;
+            )}</span></p>`;
 
         if (!pr.ok || pj.code !== 0) throw new Error(pj.message || 'posts');
         postsGrid.innerHTML = '';
@@ -3848,6 +3848,7 @@ async function finalizeEditSuccess(finalResult) {
 
     hideLoadingProgress();
     updateDownloadButtonText();
+    if (finalResult && finalResult.image) window._lastOutputRel = finalResult.image;
     resultSection.classList.remove('hidden');
     showForgePage('editor');
     resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -4390,13 +4391,18 @@ if (batchRunBtn) {
 
         try {
             const q = batchQueue.slice();
+            window._batchOutputFiles = [];
             for (let i = 0; i < q.length; i++) {
                 showLoadingProgress();
                 const finalResult = await runEditStreamForFile(q[i]);
                 await finalizeEditSuccess(finalResult);
+                if (finalResult && finalResult.image) window._batchOutputFiles.push(finalResult.image);
             }
             batchQueue = [];
             renderBatchFileList();
+            // Show batch download button
+            const batchDlBtn = document.getElementById('batchDownloadBtn');
+            if (batchDlBtn && window._batchOutputFiles.length > 1) batchDlBtn.classList.remove('hidden');
         } catch (error) {
             hideLoadingProgress();
             resultSection.classList.add('hidden');

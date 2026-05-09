@@ -95,7 +95,7 @@ function writePublicVersionInfoFile() {
 writePublicVersionInfoFile();
 
 // --- Static files ---
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 app.use('/workflows', express.static(path.join(__dirname, 'workflows')));
 app.use('/outputs', express.static(config.OUTPUT_DIR));
 

@@ -56,17 +56,9 @@ async function waitForCompletion(promptId, timeout = 300000) {
 
 async function waitForCompletionStream(promptId, onProgress, timeout = 300000) {
     const startTime = Date.now();
-    let lastProgress = 0;
+    const TOTAL_WORKFLOW_NODES = 20;
     while (Date.now() - startTime < timeout) {
         try {
-            const queueRes = await axios.get(`${config.COMFYUI_URL}/queue`);
-            const queue = queueRes.data;
-            const runningItem = queue.queue_running.find(item => item[1] === promptId);
-            if (runningItem) {
-                const progress = Math.min(50 + lastProgress * 0.5, 85);
-                onProgress({ status: 'processing', progress: Math.floor(progress) });
-                lastProgress = progress;
-            }
             const historyRes = await axios.get(`${config.COMFYUI_URL}/history/${promptId}`);
             const history = historyRes.data[promptId];
             if (history && history.status) {
@@ -76,16 +68,24 @@ async function waitForCompletionStream(promptId, onProgress, timeout = 300000) {
                     for (const nodeId in outputs) {
                         if (outputs[nodeId].images) return outputs[nodeId].images[0];
                     }
-                } else if (history.status.status_str) {
-                    const progress = Math.min(30 + lastProgress * 0.3, 70);
-                    onProgress({ status: 'processing', progress: Math.floor(progress), message: history.status.status_str });
-                    lastProgress = progress;
                 }
+                const outputs = history.outputs || {};
+                const doneNodes = Object.keys(outputs).length;
+                const realProgress = Math.min(10 + Math.round((doneNodes / TOTAL_WORKFLOW_NODES) * 85), 95);
+                const msg = history.status.status_str || 'executing';
+                onProgress({ status: 'processing', progress: realProgress, message: msg, node: doneNodes, total: TOTAL_WORKFLOW_NODES });
             } else {
+                const queueRes = await axios.get(`${config.COMFYUI_URL}/queue`);
+                const queue = queueRes.data;
                 const pendingItem = queue.queue_pending.find(item => item[1] === promptId);
                 if (pendingItem) {
-                    const queuePosition = queue.queue_pending.indexOf(pendingItem) + 1;
-                    onProgress({ status: 'queued', progress: 10, message: `Queue position: ${queuePosition}` });
+                    const pos = queue.queue_pending.indexOf(pendingItem) + 1;
+                    onProgress({ status: 'queued', progress: 5, message: `Queue position: ${pos}` });
+                } else {
+                    const runningItem = queue.queue_running.find(item => item[1] === promptId);
+                    if (runningItem) {
+                        onProgress({ status: 'processing', progress: 8, message: 'Starting execution...' });
+                    }
                 }
             }
             await new Promise(resolve => setTimeout(resolve, 500));
