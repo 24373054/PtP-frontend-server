@@ -109,9 +109,25 @@ function apiUrl(path) {
     return `${b.replace(/\/$/, '')}${p}`;
 }
 
-/** 携带 Cookie 会话（邮箱登录）；与 apiUrl 同域时使用 */
+/** 携带 Cookie 会话（邮箱登录）；与 apiUrl 同域时使用。自动附加 CSRF token。 */
 function apiFetch(url, options = {}) {
-    return fetch(url, { ...options, credentials: 'include' });
+    const opts = { ...options, credentials: 'include' };
+    // CSRF token: read from cookie and send in header for state-changing requests
+    const method = (opts.method || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+        const csrfToken = getCsrfToken();
+        if (csrfToken) {
+            opts.headers = { ...(opts.headers || {}), 'x-csrf-token': csrfToken };
+        }
+    }
+    return fetch(url, opts);
+}
+
+/** Read CSRF token from the csrf-token cookie */
+function getCsrfToken() {
+    if (typeof document === 'undefined') return null;
+    const match = document.cookie.match(/(?:^|;\s*)csrf-token=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : null;
 }
 
 /**
@@ -523,7 +539,7 @@ function hideLoadingProgress() {
 }
 
 // 国际化文本
-const i18n = {
+const i18n = window.PTP_I18N || {
     en: {
         title: 'ImageForge Web',
         'status.checking': 'Checking...',
